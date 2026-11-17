@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["practice/p01_first_scene"]
+
+# 统一管理 bevy 版本：所有 practice crate 用 bevy.workspace = true
+[workspace.dependencies]
+bevy = "0.20.1"
+
+# Bevy 官方推荐的 dev profile：
+#   opt-level = 1      —— 自己的游戏逻辑开一点优化（否则 debug 下非常卡）
+#   dev.package."*" 3  —— 依赖库全部 O3 编译（首次编译慢一点，运行快很多）
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

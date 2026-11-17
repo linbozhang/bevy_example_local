@@ -1,0 +1,13 @@
+[package]
+name = "p01_first_scene"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy.workspace = true
+
+# 日常开发建议带上（增量编译 ~40s → ~2s）：
+#   cargo run -p p01_first_scene --features dynamic_linking
+# 注意：与不带该 feature 的构建产物不能混用，切换报错时 cargo clean -p p01_first_scene
+[features]
+dynamic_linking = ["bevy/dynamic_linking"]

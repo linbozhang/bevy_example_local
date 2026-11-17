@@ -1,0 +1,11 @@
+{
+  "languages": {
+    "Rust": {
+      "language_servers": ["rust-analyzer"],
+      "format_on_save": "on",
+      "code_actions_on_format": {
+        "source.fixAll.rust-analyzer": true
+      }
+    }
+  }
+}
