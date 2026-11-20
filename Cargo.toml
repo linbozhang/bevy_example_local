@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["practice/p01_first_scene", "practice/p02_rpg_demo", "practice/p03_aibodh_chapter1"]
+members = ["practice/p01_first_scene", "practice/p01_first_scene_copy", "practice/p02_rpg_demo", "practice/p03_aibodh_chapter1"]
 
 # 统一管理 bevy 版本：所有 practice crate 用 bevy.workspace = true
 [workspace.dependencies]

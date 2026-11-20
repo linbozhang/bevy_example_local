@@ -4375,6 +4375,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "p01_first_scene_copy"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
 name = "p02_rpg_demo"
 version = "0.1.0"
 dependencies = [

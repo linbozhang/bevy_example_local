@@ -1,0 +1,9 @@
+[package]
+name = "p01_first_scene_copy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy.workspace=true
+[features]
+dynamic_linking=["bevy/dynamic_linking"]
