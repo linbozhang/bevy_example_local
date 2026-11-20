@@ -62,7 +62,7 @@ fn spawn_player(
                 index: row_start_index(Facing::Down),
             },
         ),
-        Transform::from_translation(Vec3::ZERO),
+        Transform::from_xyz(0.0, 0.0, crate::map::generate::PLAYER_Z),
         Player,
         AnimationState {
             facing: Facing::Down,

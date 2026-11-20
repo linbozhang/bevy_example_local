@@ -1,6 +1,6 @@
-# p03_aibodh_chapter1 — Let There Be a Player
+# p03_aibodh_chapter1 — Chapters 1–2：Player + World
 
-按 [AIBodh 第一章](https://aibodh.com/posts/bevy-rust-game-development-chapter-1/) 的最终版本实现，使用工作区 Bevy 0.20.1：白色背景、2D 相机、像素人物、方向键移动、四方向行走动画、独立 `PlayerPlugin`。不是前一个 RPG 工程的续作，不包含战斗。
+基于 [AIBodh 第一章](https://aibodh.com/posts/bevy-rust-game-development-chapter-1/) 的角色，继续实现 [第二章 Let There Be a World](https://aibodh.com/posts/bevy-rust-game-development-chapter-2/)。使用工作区 Bevy 0.20.1 和 `bevy_procedural_tilemaps = 0.5.0`：2D 相机、像素人物、方向键移动、四方向动画，以及五层 WFC 程序化地图。保留原包名，运行命令不变；不包含战斗。
 
 ## 运行
 
@@ -17,7 +17,8 @@ cargo test -p p03_aibodh_chapter1
 - 速度：140 像素/秒；斜向移动归一化，不会更快。
 - 动画：每方向 9 帧，0.1 秒/帧。
 - 关闭窗口：退出。
-- 相机不跟随、没有边界和碰撞；人物可以走出画面，这是第一章的范围。
+- 地图：25×18 格，每格 32 像素；共五层，启动时生成一次。
+- 相机不跟随、没有边界和碰撞；人物可走过水面、树木和地图边界，与第二章范围一致。
 
 ## 文件
 
@@ -25,7 +26,10 @@ cargo test -p p03_aibodh_chapter1
 src/main.rs                       App / 插件 / 资源路径 / 相机
 src/player.rs                     PlayerPlugin / 组件 / 移动 / 动画 / 测试
 src/assets/player_spritesheet.png 原创像素人物图集
- tools/generate_sprite.py          仅依赖 Python 标准库的资源生成脚本
+src/map/                          资源 / 模型 / sockets / 规则 / 生成与测试
+src/assets/tile_layers/tilemap.png George Bailey 的地形图集（CC-BY 4.0）
+src/assets/tile_layers/CREDITS.md  地形图集作者和许可
+tools/generate_sprite.py           仅依赖 Python 标准库的人物资源生成脚本
 LICENSE-MIT                       教程代码原始 MIT 声明
 ```
 
@@ -51,6 +55,31 @@ python3 practice/p03_aibodh_chapter1/tools/generate_sprite.py
 
 `tools/generate_sprite.py` 及生成的 `player_spritesheet.png` 按 MIT 许可提供，使用本目录 `LICENSE-MIT` 的条款；不需要外部美术资源、Python 图片库或网络下载。
 
+## 第二章：地图生成的阅读顺序
+
+1. `map/tilemap.rs`：将 sprite 名字对应到图集中 32×32 的矩形。
+2. `map/assets.rs`：`SpawnableAsset` 用 sprite 名、网格偏移、世界偏移、组件添加函数描述生成结果；多个 sprite 可组成一棵树。
+3. `map/models.rs`：`TerrainModelBuilder` 将模型和 sprite 绑定放在同一索引，避免错配。
+4. `map/sockets.rs`：创建水平材料、边缘和上下层 socket。
+5. `map/rules.rs`：泥土 → 绿草 → 黄草 → 水 → 装饰五层；透明模型表示该层空白。黄草只能在完整绿草上，装饰物底部只能连接水层的透明陆地；大树左右基座必须配对。
+6. `map/generate.rs`：用库执行 WFC，再通过库的 `spawn_node` 将结果生成到地图父实体下。
+
+### 配置与实现约定
+
+- `generate.rs` 的 `MAP_SEED = 42`：修改数字并重启可得到另一张可复现的地图。固定种子不保证所有种子都能在重试预算内成功。
+- `GRID_X/GRID_Y` 控制地图宽高，`GRID_Z = 5` 对应规则中的五层。
+- `rules.rs` 的 `WATER_WEIGHT = 0.07` 使用文章最后的水密度配置；改小可减少水的倾向，但权重不是精确百分比。
+- 小地图在 `Startup` 同步生成，最多重试 50 次，失败明确报错。没有使用库中失败后逐帧无限重试的 simple plugin；生成核心仍是教程指定的 WFC 库。
+- 装饰层外围固定为空白，防止边界生成半棵大树；树干的上方通过 `canopy_space` socket 要求空白装饰格，避免树冠与其他装饰重叠。树冠可延伸到水面上，但树干基座仍只在陆地。
+- 地形严格按 z 层叠，不启用按 y 的额外深度偏移；玩家 z 为 10，高于地形/树木。本章不实现树冠遮挡人物的动态深度排序。
+- WFC 保证局部连接规则，不保证一定出现湖泊、所有装饰种类或可通行路线。
+
+### 地形图集许可
+
+第二章地图代码参考同一固定版本的上游 `chapter2/src/map`，保留 MIT 声明。
+
+`tilemap.png` 来自教程第二章图集，基于 [George Bailey 的 16x16 Game Assets](https://opengameart.org/content/16x16-game-assets)，许可为 **CC-BY 4.0，不是 MIT**。原作者、来源、上游重新排版信息及许可链接见 `src/assets/tile_layers/CREDITS.md`；分发游戏时也应提供可访问的署名。本工程未修改该图集。
+
 ## 测试范围
 
-测试在无窗口的 Bevy App 中运行真实移动/动画系统：图集与 PNG 尺寸一致、四方向、同帧动画更新、斜向速度、相反按键抵消、动画循环/补帧、停止姿势、连续转向。窗口显示、GPU 渲染和真实键盘输入还需实际启动验证。
+角色测试在无窗口 Bevy App 中运行真实移动/动画系统。地图测试核对图集尺寸和 sprite 矩形、模型/资源索引对应，并实际生成多个种子，验证可复现、层次正确、装饰物基座不落在水上、大树左右配对、边界空白和树冠格不被其他装饰占用。窗口显示、GPU 渲染和真实键盘输入仍需要实际启动验证。

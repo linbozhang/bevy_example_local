@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+mod map;
 mod player;
 
 fn main() {
@@ -15,7 +16,7 @@ fn main() {
                 .set(ImagePlugin::default_nearest())
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "AIBodh Chapter 1 — Arrow keys to move".into(),
+                        title: "AIBodh Chapters 1–2 — Arrow keys to explore".into(),
                         resolution: (960, 640).into(),
                         ..default()
                     }),
@@ -23,7 +24,7 @@ fn main() {
                 }),
         )
         .add_systems(Startup, setup_camera)
-        .add_plugins(player::PlayerPlugin)
+        .add_plugins((map::MapPlugin, player::PlayerPlugin))
         .run();
 }
 
