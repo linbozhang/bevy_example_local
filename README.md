@@ -119,7 +119,7 @@ cargo new practice/p02_gltf_scene
 | 目标 | system / component / query / resource / commands / message / observer / 排序与调度，全链路打通 |
 | 阅读 | ⭐ [notes/01-app-ecs-core.md](notes/01-app-ecs-core.md) |
 | example | ⭐ `hello_world`、⭐ `ecs/ecs_guide`（圣经，长文精读）、⭐ `ecs/message`、⭐ `ecs/observers`、⭐ `3d/3d_scene` + `3d/3d_shapes`（两种 spawn 写法）、`ecs/startup_system`、`ecs/run_conditions`、`ecs/delayed_commands`、`ecs/change_detection`、`app/plugin`、`time/timers` |
-| 练习 | `practice/p01_first_scene`（TODO 清单在源码注释里） |
+| 练习 | `practice/p01_first_scene`（TODO 清单在源码注释里）；[p02_rpg_demo](practice/p02_rpg_demo/README.md)（无窗口 RPG 战斗：消息流水线、AOE、同时结算、Boss 连锁死亡） |
 | 完成标准 | 不看资料能独立写出：marker 组件过滤查询 + Resource 调参 + Message 通信 + Observer 监听组件添加；能说清 Message 与 Observer 的取舍 |
 
 ### Stage 2 · 3D 场景与资产（3~4 天）
