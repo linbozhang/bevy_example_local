@@ -21,21 +21,23 @@ pub(super) struct Player {
     pub lift: f32,
 }
 
-impl Default for Player {
-    fn default() -> Self {
+impl Player {
+    pub fn new(third_person: bool) -> Self {
         Self {
             selected: 0,
             position: Vec2::ZERO,
-            facing: Facing::Down,
+            facing: if third_person {
+                Facing::Up
+            } else {
+                Facing::Down
+            },
             action: Action::Walk,
             moving: false,
             elapsed: 0.0,
             lift: 0.0,
         }
     }
-}
 
-impl Player {
     pub fn select(&mut self, selected: usize) {
         self.selected = selected;
         self.action = Action::Walk;
@@ -44,17 +46,15 @@ impl Player {
         self.lift = 0.0;
     }
 
-    pub fn update(&mut self, entry: &Character, input: &ButtonInput<KeyCode>, dt: f32) {
+    pub fn update(
+        &mut self,
+        entry: &Character,
+        input: &ButtonInput<KeyCode>,
+        direction: Vec2,
+        world_direction: Vec2,
+        dt: f32,
+    ) {
         use KeyCode::*;
-        let direction: Vec2 = [
-            (ArrowLeft, Vec2::NEG_X),
-            (ArrowRight, Vec2::X),
-            (ArrowUp, Vec2::Y),
-            (ArrowDown, Vec2::NEG_Y),
-        ]
-        .into_iter()
-        .filter_map(|(key, direction)| input.pressed(key).then_some(direction))
-        .sum();
         let moving = direction != Vec2::ZERO;
         let running = moving && input.any_pressed([ShiftLeft, ShiftRight]);
         let speed = entry.base_move_speed
@@ -63,7 +63,7 @@ impl Player {
             } else {
                 1.0
             };
-        self.position += direction.normalize_or_zero() * speed * dt;
+        self.position += world_direction.normalize_or_zero() * speed * dt;
 
         let old_row = self.row(entry);
         if moving {
@@ -126,4 +126,19 @@ impl Player {
         let col = (self.elapsed / f64::from(clip.frame_time)) as u32;
         UVec2::new(col.min(clip.frame_count - 1), self.row(entry))
     }
+}
+
+pub(super) fn movement_input(input: &ButtonInput<KeyCode>, wasd: bool) -> Vec2 {
+    use KeyCode::*;
+    [
+        (ArrowLeft, KeyA, Vec2::NEG_X),
+        (ArrowRight, KeyD, Vec2::X),
+        (ArrowUp, KeyW, Vec2::Y),
+        (ArrowDown, KeyS, Vec2::NEG_Y),
+    ]
+    .into_iter()
+    .filter_map(|(arrow, key, direction)| {
+        (input.pressed(arrow) || wasd && input.pressed(key)).then_some(direction)
+    })
+    .sum()
 }

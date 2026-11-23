@@ -1,4 +1,5 @@
 //! The same roster, input and animation clock drive both render modes.
+mod camera;
 mod config;
 mod motion;
 mod view;
@@ -21,19 +22,42 @@ impl Plugin for CharactersPlugin {
         app.insert_resource(*self)
             .init_asset::<Roster>()
             .init_asset_loader::<RosterLoader>()
-            .add_systems(Startup, load_roster)
-            .add_systems(Update, (update_player, view::draw_player).chain());
+            .add_systems(Startup, load_roster);
+        match self {
+            Self::Sprites2d => {
+                app.add_systems(Update, (update_player, view::draw_player).chain());
+            }
+            Self::Billboard3d => {
+                app.init_resource::<camera::Orbit>()
+                    .add_systems(Startup, camera::spawn_camera)
+                    .add_systems(
+                        Update,
+                        (
+                            camera::read_mouse,
+                            update_player,
+                            camera::follow_player,
+                            view::draw_player,
+                        )
+                            .chain(),
+                    );
+            }
+        }
     }
 }
 
-fn load_roster(mut commands: Commands, server: Res<AssetServer>) {
+fn load_roster(mut commands: Commands, server: Res<AssetServer>, mode: Res<CharactersPlugin>) {
     commands.insert_resource(RosterHandle(server.load("characters/characters.ron")));
-    commands.spawn((Name::new("Player"), Player::default(), Transform::default()));
+    commands.spawn((
+        Name::new("Player"),
+        Player::new(matches!(*mode, CharactersPlugin::Billboard3d)),
+        Transform::default(),
+    ));
 }
 
 fn update_player(
     input: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
+    orbit: Option<Res<camera::Orbit>>,
     handle: Res<RosterHandle>,
     rosters: Res<Assets<Roster>>,
     mut player: Query<(&mut Player, &mut Name)>,
@@ -57,7 +81,11 @@ fn update_player(
         *name = Name::new(entry.name.clone());
         info!("Selected {} (max health: {})", entry.name, entry.max_health);
     }
-    player.update(entry, &input, time.delta_secs());
+    let direction = motion::movement_input(&input, orbit.is_some());
+    let world_direction = orbit
+        .as_ref()
+        .map_or(direction, |orbit| orbit.rotate_move(direction));
+    player.update(entry, &input, direction, world_direction, time.delta_secs());
 }
 
 #[cfg(test)]

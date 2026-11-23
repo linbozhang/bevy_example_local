@@ -6,12 +6,17 @@ use std::{
 use bevy::{
     asset::LoadState,
     image::{CompressedImageFormats, ImageLoader},
+    input::mouse::AccumulatedMouseMotion,
     prelude::*,
+    window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
 
-use super::{CharactersPlugin, Player, Roster, RosterHandle};
+use super::{
+    CharactersPlugin, Player, Roster, RosterHandle,
+    camera::{FollowCamera, ground_position},
+};
 use crate::map::{
-    LAND_TOP,
+    CameraObstacle,
     generate::{PLAYER_Z, TILE_SIZE},
 };
 
@@ -32,12 +37,10 @@ fn test_app(mode: CharactersPlugin) -> (App, Entity) {
     .init_asset::<Mesh>()
     .init_asset::<StandardMaterial>()
     .init_asset::<TextureAtlasLayout>()
+    .init_resource::<AccumulatedMouseMotion>()
+    .init_resource::<ButtonInput<MouseButton>>()
     .init_resource::<ButtonInput<KeyCode>>()
     .init_resource::<Time>();
-    if matches!(mode, CharactersPlugin::Billboard3d) {
-        app.world_mut()
-            .spawn((Camera3d::default(), Transform::IDENTITY));
-    }
     app.update();
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -104,7 +107,12 @@ fn both_modes_share_character_selection_movement_and_animation() {
     for mode in [CharactersPlugin::Sprites2d, CharactersPlugin::Billboard3d] {
         let (mut app, entity) = test_app(mode);
         let default_texture = "characters/adventurer.png";
-        check_frame(&app, entity, 0, 2, default_texture);
+        let idle_row = if matches!(mode, CharactersPlugin::Sprites2d) {
+            2
+        } else {
+            0
+        };
+        check_frame(&app, entity, 0, idle_row, default_texture);
         step(&mut app, 0.5, &[ArrowUp, ArrowRight]);
         let walk = app.world().get::<Player>(entity).unwrap().position;
         assert!((walk.length() - 70.0).abs() < 0.001);
@@ -112,9 +120,9 @@ fn both_modes_share_character_selection_movement_and_animation() {
         match mode {
             CharactersPlugin::Sprites2d => assert_eq!(rendered, walk.extend(PLAYER_Z)),
             CharactersPlugin::Billboard3d => {
-                assert!((rendered.x - walk.x / TILE_SIZE).abs() < 1e-5);
-                assert!((rendered.z + walk.y / TILE_SIZE).abs() < 1e-5);
-                assert!(rendered.y > LAND_TOP);
+                let billboard = app.world().get::<Transform>(entity).unwrap();
+                let feet = rendered - billboard.rotation * Vec3::Y * (billboard.scale.y / 3.0);
+                assert!(feet.abs_diff_eq(ground_position(walk) + Vec3::Y * 0.02, 1e-5));
             }
         }
         check_frame(&app, entity, 0, 0, default_texture);
@@ -176,4 +184,87 @@ fn roster_matches_all_six_sprite_sheets() {
             character.tile_size * character.atlas_rows
         );
     }
+}
+
+#[test]
+fn third_person_camera_follows_and_retracts_around_blocks() {
+    let (mut app, player) = test_app(CharactersPlugin::Billboard3d);
+    let world = app.world_mut();
+    let camera = world
+        .query_filtered::<Entity, With<FollowCamera>>()
+        .single(world)
+        .unwrap();
+    let initial = *world.get::<Transform>(camera).unwrap();
+    assert!(initial.translation.z > 0.0);
+    step(&mut app, 0.25, &[KeyCode::KeyW]);
+    let updated = *app.world().get::<Transform>(camera).unwrap();
+    let traveled = app.world().get::<Player>(player).unwrap().position;
+    assert!(traveled.abs_diff_eq(Vec2::Y * 35.0, 1e-5));
+    assert!(
+        (updated.translation - initial.translation)
+            .abs_diff_eq(Vec3::NEG_Z * 35.0 / TILE_SIZE, 1e-5)
+    );
+
+    let obstacle = app
+        .world_mut()
+        .spawn((
+            CameraObstacle,
+            Transform::from_translation(updated.translation + *updated.forward() * 2.0),
+        ))
+        .id();
+    step(&mut app, 0.0, &[]);
+    let shortened = app.world().get::<Transform>(camera).unwrap();
+    assert!((shortened.translation - updated.translation).dot(*updated.forward()) > 2.0);
+    app.world_mut().despawn(obstacle);
+    step(&mut app, 0.01, &[KeyCode::Space]);
+    step(&mut app, 0.15, &[]);
+    assert!(app.world().get::<Player>(player).unwrap().lift > 0.0);
+    assert!(
+        app.world()
+            .get::<Transform>(camera)
+            .unwrap()
+            .translation
+            .abs_diff_eq(updated.translation, 1e-5)
+    );
+}
+
+#[test]
+fn mouse_orbit_changes_forward_movement_and_escape_releases_cursor() {
+    let (mut app, player) = test_app(CharactersPlugin::Billboard3d);
+    let window = app
+        .world_mut()
+        .spawn((
+            Window {
+                focused: true,
+                ..default()
+            },
+            PrimaryWindow,
+            CursorOptions::default(),
+        ))
+        .id();
+    app.world_mut()
+        .resource_mut::<ButtonInput<MouseButton>>()
+        .press(MouseButton::Left);
+    step(&mut app, 0.0, &[]);
+    assert_eq!(
+        app.world().get::<CursorOptions>(window).unwrap().grab_mode,
+        CursorGrabMode::Locked
+    );
+    app.world_mut()
+        .resource_mut::<AccumulatedMouseMotion>()
+        .delta
+        .x = -std::f32::consts::FRAC_PI_2 / 0.003;
+    step(&mut app, 0.25, &[KeyCode::KeyW]);
+    assert!(
+        app.world()
+            .get::<Player>(player)
+            .unwrap()
+            .position
+            .abs_diff_eq(Vec2::NEG_X * 35.0, 1e-5)
+    );
+    check_frame(&app, player, 0, 0, "characters/adventurer.png");
+    step(&mut app, 0.0, &[KeyCode::Escape]);
+    let cursor = app.world().get::<CursorOptions>(window).unwrap();
+    assert_eq!(cursor.grab_mode, CursorGrabMode::None);
+    assert!(cursor.visible);
 }

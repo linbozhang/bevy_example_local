@@ -1,4 +1,4 @@
-use bevy::{camera::ScalingMode, prelude::*};
+use bevy::prelude::*;
 
 use super::{
     block_art::{BlockArt, block_mesh},
@@ -9,6 +9,10 @@ use super::{
 pub(crate) const LAND_TOP: f32 = 1.0;
 const LAKE_BED: f32 = 0.55;
 const WATER_TOP: f32 = 0.8;
+// All generated blocks are axis-aligned under an identity terrain root.
+#[derive(Component)]
+pub(crate) struct CameraObstacle;
+
 const CELL_COUNT: usize = (GRID_X * GRID_Y) as usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +61,7 @@ impl BlockPalette {
     fn spawn(&self, commands: &mut Commands, name: &str, art: BlockArt, center: Vec3, size: Vec3) {
         commands.spawn((
             Name::new(name.to_owned()),
+            CameraObstacle,
             Mesh3d(self.mesh.clone()),
             MeshMaterial3d(self.materials[art as usize].clone()),
             Transform::from_translation(center).with_scale(size),
@@ -232,17 +237,6 @@ pub(super) fn setup_map_3d(
         brightness: 170.0,
         ..default()
     });
-    commands.spawn((
-        Camera3d::default(),
-        Projection::Orthographic(OrthographicProjection {
-            scaling_mode: ScalingMode::AutoMin {
-                min_width: 36.0,
-                min_height: 28.0,
-            },
-            ..OrthographicProjection::default_3d()
-        }),
-        Transform::from_xyz(18.0, 24.0, 26.0).looking_at(Vec3::new(0.0, 0.8, 0.0), Vec3::Y),
-    ));
     commands.spawn((
         DirectionalLight {
             illuminance: 10_000.0,

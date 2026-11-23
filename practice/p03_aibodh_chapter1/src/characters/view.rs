@@ -1,10 +1,12 @@
 use bevy::{light::NotShadowCaster, math::Affine2, prelude::*};
 
-use super::{CharactersPlugin, Roster, RosterHandle, config::Character, motion::Player};
-use crate::map::{
-    LAND_TOP,
-    generate::{PLAYER_Z, TILE_SIZE},
+use super::{
+    CharactersPlugin, Roster, RosterHandle,
+    camera::{FollowCamera, ground_position},
+    config::Character,
+    motion::Player,
 };
+use crate::map::generate::{PLAYER_Z, TILE_SIZE};
 
 #[derive(Component)]
 pub(super) struct DisplayedCharacter(usize);
@@ -25,7 +27,7 @@ pub(super) fn draw_player(
     mut layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    camera: Query<&Transform, (With<Camera3d>, Without<Player>)>,
+    camera: Query<&Transform, (With<FollowCamera>, Without<Player>)>,
     mut player: Query<(
         Entity,
         &Player,
@@ -74,12 +76,10 @@ pub(super) fn draw_player(
             let size = entry.tile_size as f32 / TILE_SIZE;
             transform.rotation = camera.rotation;
             transform.scale = Vec3::splat(size);
-            // Map up is -Z. The transparent tile has feet ~1/3 tile below its center.
-            transform.translation = Vec3::new(
-                player.position.x / TILE_SIZE,
-                LAND_TOP + 0.02 + height / TILE_SIZE,
-                -player.position.y / TILE_SIZE,
-            ) + camera.rotation * Vec3::Y * (size / 3.0);
+            // Place the billboard from its feet, independent of the camera pivot.
+            transform.translation = ground_position(player.position)
+                + Vec3::Y * (0.02 + height / TILE_SIZE)
+                + camera.rotation * Vec3::Y * (size / 3.0);
             let uv = frame_uv(entry, frame);
             if let Some(material) = material {
                 if let Some(mut mat) = materials.get_mut(&material.0) {
