@@ -68,6 +68,15 @@ impl Player {
         }
     }
 
+    pub(crate) fn facing_direction(&self) -> Vec2 {
+        match self.facing {
+            Facing::Up => Vec2::Y,
+            Facing::Down => Vec2::NEG_Y,
+            Facing::Left => Vec2::NEG_X,
+            Facing::Right => Vec2::X,
+        }
+    }
+
     pub fn select(&mut self, selected: usize) {
         self.selected = selected;
         self.state = CharacterState::Idle;

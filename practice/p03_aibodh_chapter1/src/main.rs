@@ -6,16 +6,18 @@ use bevy::{
 mod characters;
 mod game_state;
 mod inventory;
+mod magic;
 mod map;
+mod particles;
 
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let sprites_2d = args.iter().any(|arg| arg == "--2d");
     let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
     let (title, background) = if sprites_2d {
-        ("AIBodh Chapter 5 — 2D", Color::BLACK)
+        ("AIBodh Chapter 6 — 2D", Color::BLACK)
     } else {
-        ("AIBodh Chapter 5 — 3D", Color::srgb(0.11, 0.15, 0.21))
+        ("AIBodh Chapter 6 — 3D", Color::srgb(0.11, 0.15, 0.21))
     };
 
     let mut app = App::new();
@@ -56,6 +58,8 @@ fn main() {
     app.add_plugins((
         characters::collision_debug::CollisionDebugPlugin,
         inventory::InventoryPlugin,
+        magic::MagicPlugin,
+        particles::ParticlePlugin,
     ));
     app.run();
 }

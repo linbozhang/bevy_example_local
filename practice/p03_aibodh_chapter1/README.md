@@ -1,4 +1,4 @@
-# p03_aibodh_chapter1 — Chapters 1–5：Player + World + Characters + Collisions + Pickups
+# p03_aibodh_chapter1 — Chapters 1–6：从角色到魔法粒子
 
 在 [第一章的角色](https://aibodh.com/posts/bevy-rust-game-development-chapter-1/) 和 [第二章的五层 WFC 地图](https://aibodh.com/posts/bevy-rust-game-development-chapter-2/) 上，实现 [第三章 Let The Data Flow](https://aibodh.com/posts/bevy-rust-game-development-chapter-3/) 的数据驱动角色系统。使用 Bevy 0.20.1 和 `bevy_procedural_tilemaps = 0.5.0`；默认启动 3D，`--2d` 切到 2D。 两种模式均实现 [第四章 Let There Be Collisions](https://aibodh.com/posts/bevy-rust-game-development-chapter-4/) 的加载、暂停、碰撞和深度排序。
 
@@ -21,6 +21,12 @@ cargo test -p p03_aibodh_chapter1
 ### 3D 第三人称相机
 
 默认从角色背后跟随。左键单击窗口捕获鼠标，移动鼠标转动视角，`Esc` 暂停并释放鼠标，再按 `Esc` 恢复；恢复后可重新点击捕获。`WASD` 或方向键按相机的水平朝向移动，`Shift` 奔跑，`Space` 跳跃。镜头不随跳跃上下抖动；树木或地面挡在镜头与角色之间时，镜头会拉近。
+
+## 第六章：魔法粒子
+
+参照 [Let There Be Particles](https://aibodh.com/posts/bevy-rust-game-development-chapter-6/)。两个模式都用 `Ctrl` 朝角色当前朝向施放，冷却 0.5 秒；`F5` 火焰、`F6` 奥术、`F7` 暗影、`F8` 毒雾。右上角显示当前法术，原来的 `1`–`6` 仍用于换角。3D 发射方向按相机水平朝向换算，粒子面向相机并受场景深度遮挡。
+
+`magic.rs` 定义四种法术及发射参数；`particles/` 共用发射、运动、旋转、变色、缩小和过期回收逻辑。2D、3D 分别使用各自的 WESL 入口，共用径向辉光函数和加法混合效果。暂停会冻结粒子与冷却；本章只有特效，不实现命中、伤害或法术与地形碰撞。
 
 ## 第五章：拾取、背包与镜头跟随
 

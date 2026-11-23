@@ -19,7 +19,7 @@ const ARM_RECOVERY_SPEED: f32 = 12.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
 
 #[derive(Component)]
-pub(super) struct FollowCamera;
+pub(crate) struct FollowCamera;
 
 #[derive(Component, Default)]
 pub(super) struct FollowCamera2d(Option<Vec2>);
@@ -64,7 +64,7 @@ pub(super) struct FollowRig3d {
 }
 
 #[derive(Resource)]
-pub(super) struct Orbit {
+pub(crate) struct Orbit {
     yaw: f32,
     pitch: f32,
 }
@@ -94,7 +94,7 @@ impl Orbit {
     }
 }
 
-pub(super) fn ground_position(position: Vec2) -> Vec3 {
+pub(crate) fn ground_position(position: Vec2) -> Vec3 {
     Vec3::new(position.x / TILE_SIZE, LAND_TOP, -position.y / TILE_SIZE)
 }
 

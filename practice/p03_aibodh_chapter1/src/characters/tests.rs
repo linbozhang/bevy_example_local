@@ -37,6 +37,8 @@ fn test_app(mode: CharactersPlugin) -> (App, Entity) {
         crate::game_state::GameStatePlugin,
         mode,
         crate::inventory::InventoryPlugin,
+        crate::magic::MagicPlugin,
+        crate::particles::ParticlePlugin,
     ))
     .init_resource::<CollisionMap>()
     .init_asset::<Image>()
@@ -445,4 +447,61 @@ fn generated_maps_spawn_matching_pickups() {
     let two_d = maps.next().unwrap();
     assert!(!two_d.is_empty());
     assert_eq!(two_d, maps.next().unwrap());
+}
+
+#[test]
+fn spells_use_current_facing_respect_pause_and_cooldown_and_expire() {
+    use crate::particles::{Emitter, Particle};
+    use KeyCode::{ArrowRight, ControlLeft, ControlRight, Escape, F6, F8};
+    fn count<T: Component>(app: &mut App) -> usize {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<T>>()
+            .iter(world)
+            .count()
+    }
+    for mode in [CharactersPlugin::Sprites2d, CharactersPlugin::Billboard3d] {
+        let (mut app, _) = test_app(mode);
+        step(&mut app, 0.04, &[ArrowRight, F8, ControlLeft]);
+        assert_eq!(count::<Particle>(&mut app), 16);
+        assert_eq!(count::<Emitter>(&mut app), 0);
+        let world = app.world_mut();
+        assert!(
+            world
+                .query::<&Text>()
+                .iter(world)
+                .any(|text| text.0.starts_with("Poison"))
+        );
+        let previous: Vec<_> = world
+            .query_filtered::<&Transform, With<Particle>>()
+            .iter(world)
+            .copied()
+            .collect();
+        step(&mut app, 1.0, &[Escape, ControlRight]);
+        let world = app.world_mut();
+        assert_eq!(
+            world
+                .query_filtered::<&Transform, With<Particle>>()
+                .iter(world)
+                .copied()
+                .collect::<Vec<_>>(),
+            previous
+        );
+        step(&mut app, 0.12, &[Escape, ControlRight]);
+        assert_eq!(count::<Particle>(&mut app), 16);
+        let world = app.world_mut();
+        assert!(
+            world
+                .query_filtered::<&Transform, With<Particle>>()
+                .iter(world)
+                .zip(previous)
+                .all(
+                    |(now, old)| now.translation.x > old.translation.x && now.scale.x < old.scale.x
+                )
+        );
+        step(&mut app, 2.0, &[]);
+        assert_eq!(count::<Particle>(&mut app), 0);
+        step(&mut app, 0., &[F6, ControlRight]);
+        assert_eq!(count::<Particle>(&mut app), 13);
+    }
 }

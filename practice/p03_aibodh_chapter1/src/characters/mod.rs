@@ -10,12 +10,16 @@ use crate::{
     map::collision::CollisionMap,
 };
 use bevy::{asset::LoadState, prelude::*};
+pub(crate) use camera::{FollowCamera, Orbit, ground_position};
 use config::{Roster, RosterLoader};
 pub(crate) use motion::Player;
 use motion::Velocity;
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct MovementSet;
+
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ViewSet;
 
 #[derive(Clone, Copy, Resource)]
 pub enum CharactersPlugin {
@@ -50,7 +54,7 @@ impl Plugin for CharactersPlugin {
                             update_player,
                             motion::apply_velocity.in_set(MovementSet),
                             camera::follow_player_2d,
-                            view::draw_player,
+                            view::draw_player.in_set(ViewSet),
                         )
                             .chain()
                             .run_if(in_state(GameState::Playing)),
@@ -66,7 +70,7 @@ impl Plugin for CharactersPlugin {
                             update_player,
                             motion::apply_velocity.in_set(MovementSet),
                             camera::follow_player,
-                            view::draw_player,
+                            view::draw_player.in_set(ViewSet),
                         )
                             .chain()
                             .run_if(in_state(GameState::Playing)),
@@ -136,6 +140,7 @@ fn spawn_player(mut commands: Commands, mode: Res<CharactersPlugin>, map: Res<Co
         Name::new("Player"),
         player,
         Velocity::default(),
+        crate::magic::PlayerMagic::default(),
         Transform::default(),
     ));
 }
