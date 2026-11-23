@@ -1,17 +1,24 @@
-//! Chapter 2：五层 WFC 地形；z 是图层，不是可行走高度。
+//! 同一套五层 WFC 地图规则，提供 2D 精灵和 3D 方块两种视图。
 mod assets;
 pub mod generate;
 mod models;
 mod rules;
 mod sockets;
 mod tilemap;
+mod view_3d;
 
 use bevy::prelude::*;
 
-pub struct MapPlugin;
+pub enum MapPlugin {
+    Sprites2d,
+    Blocks3d,
+}
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, generate::setup_map);
+        match self {
+            Self::Sprites2d => app.add_systems(Startup, generate::setup_map),
+            Self::Blocks3d => app.add_systems(Startup, view_3d::setup_map_3d),
+        };
     }
 }

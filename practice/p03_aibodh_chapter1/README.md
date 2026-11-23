@@ -1,24 +1,35 @@
 # p03_aibodh_chapter1 — Chapters 1–2：Player + World
 
-基于 [AIBodh 第一章](https://aibodh.com/posts/bevy-rust-game-development-chapter-1/) 的角色，继续实现 [第二章 Let There Be a World](https://aibodh.com/posts/bevy-rust-game-development-chapter-2/)。使用工作区 Bevy 0.20.1 和 `bevy_procedural_tilemaps = 0.5.0`：2D 相机、像素人物、方向键移动、四方向动画，以及五层 WFC 程序化地图。保留原包名，运行命令不变；不包含战斗。
+基于 [AIBodh 第一章](https://aibodh.com/posts/bevy-rust-game-development-chapter-1/) 的角色，继续实现 [第二章 Let There Be a World](https://aibodh.com/posts/bevy-rust-game-development-chapter-2/)。使用工作区 Bevy 0.20.1 和 `bevy_procedural_tilemaps = 0.5.0`：2D 相机、像素人物、方向键移动、四方向动画，以及五层 WFC 程序化地图。在此基础上增加了 3D 彩色方块视图，默认启动 3D，也可切回原版 2D；不包含战斗。
 
 ## 运行
 
 在 workspace 根目录：
 
 ```sh
-cargo run -p p03_aibodh_chapter1
+cargo run -p p03_aibodh_chapter1        # 3D 彩色方块地图
+cargo run -p p03_aibodh_chapter1 -- --2d # 原版 2D 地图和玩家
 cargo test -p p03_aibodh_chapter1
 ```
 
 也可以进入本目录后运行 `cargo run`。资源目录由 `CARGO_MANIFEST_DIR` 定位，启动时不必复制资源。该路径适合源码练习；若单独分发可执行文件，需要改为可部署的资源路径。
 
-- 方向键：移动；松键停止并保留当前动画姿势。
+- 3D 模式使用固定斜俯视相机，仅展示地形，不生成玩家。
+- 2D 模式用方向键移动；松键停止并保留当前动画姿势。
 - 速度：140 像素/秒；斜向移动归一化，不会更快。
 - 动画：每方向 9 帧，0.1 秒/帧。
 - 关闭窗口：退出。
-- 地图：25×18 格，每格 32 像素；共五层，启动时生成一次。
+- 地图：25×18 格，共五层，启动时生成一次。2D 每格 32 像素；3D 每格 1 个世界单位。
 - 相机不跟随、没有边界和碰撞；人物可走过水面、树木和地图边界，与第二章范围一致。
+
+## 3D 版如何复用 2D 的地图
+
+1. `main.rs` 选择 `MapPlugin::Blocks3d` 或 `MapPlugin::Sprites2d`。
+2. 两个模式都调用 `map/generate.rs` 的 `create_generator`，共用同一套模型、连接规则和种子。生成的是地图数据，不是图像。
+3. 2D 版按图集生成精灵。3D 版在 `map/view_3d.rs` 中按模型的首个素材名确定类型：泥土棕、绿草绿、黄草金、水蓝、树深绿、岩石灰、植物紫、树桩深棕。边缘和拐角沿用同类颜色，不复制贴图的轮廓。
+4. 3D 版把网格的 `(x, y)` 映射到世界的 `(X, Z)`，世界 `Y` 用来堆叠方块。空白模型既不画也不占高度；不同类型有不同厚度或高度。方块共用一个立方体网格，每类共用一个材质。
+
+这是同一张分层瓦片地图的 3D 表现，不是洞穴或体素地形生成。水是蓝色薄方块，树是深绿色立方体比例拉伸的方块；没有物理或碰撞。
 
 ## 文件
 
@@ -27,6 +38,7 @@ src/main.rs                       App / 插件 / 资源路径 / 相机
 src/player.rs                     PlayerPlugin / 组件 / 移动 / 动画 / 测试
 src/assets/player_spritesheet.png 原创像素人物图集
 src/map/                          资源 / 模型 / sockets / 规则 / 生成与测试
+src/map/view_3d.rs                方块样式 / 世界坐标 / 3D 相机与灯光
 src/assets/tile_layers/tilemap.png George Bailey 的地形图集（CC-BY 4.0）
 src/assets/tile_layers/CREDITS.md  地形图集作者和许可
 tools/generate_sprite.py           仅依赖 Python 标准库的人物资源生成脚本
@@ -82,4 +94,4 @@ python3 practice/p03_aibodh_chapter1/tools/generate_sprite.py
 
 ## 测试范围
 
-角色测试在无窗口 Bevy App 中运行真实移动/动画系统。地图测试核对图集尺寸和 sprite 矩形、模型/资源索引对应，并实际生成多个种子，验证可复现、层次正确、装饰物基座不落在水上、大树左右配对、边界空白和树冠格不被其他装饰占用。窗口显示、GPU 渲染和真实键盘输入仍需要实际启动验证。
+角色测试在无窗口 Bevy App 中运行真实移动/动画系统。地图测试核对图集尺寸和 sprite 矩形、模型/资源索引对应，并实际生成多个种子，验证可复现、层次正确、装饰物基座不落在水上、大树左右配对、边界空白和树冠格不被其他装饰占用。3D 测试核对颜色分类、地图居中、方块网格复用和水层位于地面上方。画面和真实键盘输入仍需实际启动验证。

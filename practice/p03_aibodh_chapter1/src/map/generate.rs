@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_procedural_tilemaps::{prelude::*, spawner::spawn_node};
 
 use super::{
-    assets::{load_assets, prepare_tilemap_handles},
+    assets::{SpawnableAsset, load_assets, prepare_tilemap_handles},
     rules::build_world,
 };
 
@@ -17,7 +17,7 @@ pub const PLAYER_Z: f32 = 10.0;
 
 pub type TerrainGenerator = Generator<Cartesian3D, CartesianGrid<Cartesian3D>>;
 
-pub fn create_generator(seed: u64) -> TerrainGenerator {
+pub fn create_generator(seed: u64) -> (TerrainGenerator, Vec<Vec<SpawnableAsset>>) {
     let (definitions, models, sockets) = build_world();
     // 装饰层的第一个模型是空白；用外围空白约束防止边界生成半棵树。
     let props_void = definitions
@@ -40,7 +40,7 @@ pub fn create_generator(seed: u64) -> TerrainGenerator {
             }
         }
     }
-    GeneratorBuilder::new()
+    let generator = GeneratorBuilder::new()
         .with_rules(rules)
         .with_grid(grid)
         .with_initial_nodes_raw(borders)
@@ -49,7 +49,8 @@ pub fn create_generator(seed: u64) -> TerrainGenerator {
         .with_node_heuristic(NodeSelectionHeuristic::MinimumRemainingValue)
         .with_model_heuristic(ModelSelectionHeuristic::WeightedProbability)
         .build()
-        .expect("terrain generator configuration must be valid")
+        .expect("terrain generator configuration must be valid");
+    (generator, definitions)
 }
 
 pub fn setup_map(
@@ -57,7 +58,7 @@ pub fn setup_map(
     server: Res<AssetServer>,
     mut layouts: ResMut<Assets<TextureAtlasLayout>>,
 ) {
-    let mut generator = create_generator(MAP_SEED);
+    let (mut generator, definitions) = create_generator(MAP_SEED);
     // 小地图在 Startup 同步生成：达到重试上限明确失败，不逐帧无限重试。
     let (info, data) = generator
         .generate_grid()
@@ -66,7 +67,6 @@ pub fn setup_map(
         "Generated {} terrain cells with seed {MAP_SEED}: {info:?}",
         data.iter().count()
     );
-    let (definitions, _, _) = build_world();
     let handles = prepare_tilemap_handles(&server, &mut layouts, "tile_layers", "tilemap.png");
     let spawner = NodesSpawner::new(
         load_assets(&handles, definitions),
@@ -132,12 +132,12 @@ mod tests {
         let mut water_count = 0;
         let mut prop_count = 0;
         for seed in [42, 7, 123] {
-            let mut generator = create_generator(seed);
+            let (mut generator, _) = create_generator(seed);
             let (_, data) = generator
                 .generate_grid()
                 .expect("seed must produce a map within budget");
             assert_eq!(data.iter().count(), (GRID_X * GRID_Y * GRID_Z) as usize);
-            let mut repeat = create_generator(seed);
+            let (mut repeat, _) = create_generator(seed);
             assert_eq!(
                 data.iter().collect::<Vec<_>>(),
                 repeat.generate_grid().unwrap().1.iter().collect::<Vec<_>>()

@@ -16,7 +16,6 @@ pub struct SpawnableAsset {
 }
 
 impl SpawnableAsset {
-    #[cfg(test)]
     pub fn sprite_name(&self) -> &'static str {
         self.sprite_name
     }
