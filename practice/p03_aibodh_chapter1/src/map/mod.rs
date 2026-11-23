@@ -1,6 +1,7 @@
 //! 同一套五层 WFC 地图规则，提供 2D 精灵和 3D 方块两种视图。
 mod assets;
 mod block_art;
+pub(crate) mod collision;
 pub mod generate;
 mod models;
 mod rules;

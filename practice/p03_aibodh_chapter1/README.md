@@ -1,6 +1,6 @@
-# p03_aibodh_chapter1 — Chapters 1–3：Player + World + Characters
+# p03_aibodh_chapter1 — Chapters 1–5：Player + World + Characters + Collisions + Pickups
 
-在 [第一章的角色](https://aibodh.com/posts/bevy-rust-game-development-chapter-1/) 和 [第二章的五层 WFC 地图](https://aibodh.com/posts/bevy-rust-game-development-chapter-2/) 上，实现 [第三章 Let The Data Flow](https://aibodh.com/posts/bevy-rust-game-development-chapter-3/) 的数据驱动角色系统。使用 Bevy 0.20.1 和 `bevy_procedural_tilemaps = 0.5.0`；默认启动 3D，`--2d` 切到 2D。
+在 [第一章的角色](https://aibodh.com/posts/bevy-rust-game-development-chapter-1/) 和 [第二章的五层 WFC 地图](https://aibodh.com/posts/bevy-rust-game-development-chapter-2/) 上，实现 [第三章 Let The Data Flow](https://aibodh.com/posts/bevy-rust-game-development-chapter-3/) 的数据驱动角色系统。使用 Bevy 0.20.1 和 `bevy_procedural_tilemaps = 0.5.0`；默认启动 3D，`--2d` 切到 2D。 两种模式均实现 [第四章 Let There Be Collisions](https://aibodh.com/posts/bevy-rust-game-development-chapter-4/) 的加载、暂停、碰撞和深度排序。
 
 ## 运行
 
@@ -16,11 +16,24 @@ cargo test -p p03_aibodh_chapter1
 
 两个模式使用相同的操作：方向键移动，按住任一 `Shift` 奔跑，按 `Space` 跳跃，按 `1`–`6` 原地切换角色。默认角色为 Adventurer。斜向移动归一化；静止时保持最后朝向，显示 Walk 的首帧。
 
-地图为 25×18 格、五层，启动时生成一次。2D 每格 32 像素；3D 每格 1 个世界单位。2D 相机仍固定。角色不与地形碰撞，不随地形调整高度，也没有战斗；3D 角色以陆地表面为基准。
+地图为 25×18 格、五层，启动时生成一次。2D 每格 32 像素；3D 每格 1 个世界单位。两种模式都阻挡树干、岩石、树桩、深水和地图边界；浅岸可走。3D 角色依然以陆地表面为高度基准，不做通用物理或战斗。
 
 ### 3D 第三人称相机
 
-默认从角色背后跟随。左键单击窗口捕获鼠标，移动鼠标转动视角，`Esc` 释放鼠标。`WASD` 或方向键按相机的水平朝向移动，`Shift` 奔跑，`Space` 跳跃。镜头不随跳跃上下抖动；树木或地面挡在镜头与角色之间时，镜头会拉近。
+默认从角色背后跟随。左键单击窗口捕获鼠标，移动鼠标转动视角，`Esc` 暂停并释放鼠标，再按 `Esc` 恢复；恢复后可重新点击捕获。`WASD` 或方向键按相机的水平朝向移动，`Shift` 奔跑，`Space` 跳跃。镜头不随跳跃上下抖动；树木或地面挡在镜头与角色之间时，镜头会拉近。
+
+## 第五章：拾取、背包与镜头跟随
+
+参照 [Let There Be Pickups](https://aibodh.com/posts/bevy-rust-game-development-chapter-5/)。两种模式都可自动拾取草药、花朵、蘑菇和蕨类：走进物品周围 40 像素（3D 中 1.25 格）的范围即可。拾取后物品从地图消失，左上角背包计数立即更新；换角不清空背包，退出游戏后不保留。
+
+2D 镜头放大到约 10 格高并平滑跟随。这里调整正交投影而非把瓦片改成 64 像素，以保持原有速度、碰撞和地图单位。3D 保留鼠标环绕和障碍避让，跟随位置与镜头拉回后的复位改为平滑过渡。两个模式都可加 `--fullscreen` 使用无边框全屏。
+
+## 第四章：状态、碰撞和遮挡
+
+- `Esc` 暂停/继续，暂停时停止移动、动画、换角和相机控制。加载时先读取角色配置与贴图（2D 还会等待地形图集），离开加载状态时只创建一次玩家。
+- 角色使用 Idle、Walking、Running、Jumping 四种互斥状态；播放跳跃动画时不做水平移动。输入计算速度，移动系统再按该速度处理碰撞。
+- 两种视图从 WFC 模型生成同一个碰撞网格。临接陆地的水格为浅岸；树冠不参与地面碰撞。角色用脚下的圆形碰撞体，分小步扫掠以防穿透，斜撞时可沿边滑动。
+- `F3` 切换碰撞调试：青色圆是玩家脚下碰撞体，红框是树干/岩石/树桩，蓝框是深水，绿框是可走浅岸。2D 按脚底与物件基座的 Y 排序，树冠沿用树干基座的深度；3D 使用深度缓冲遮挡，并保留第三人称镜头的避障。
 
 ## 第三章：数据驱动角色
 
@@ -36,7 +49,7 @@ cargo test -p p03_aibodh_chapter1
 3. 2D 版按图集生成精灵。3D 版按每个模型的首个素材名选择外观，并把网格 `(x, y)` 映射到世界 `(X, Z)`。陆地取最上层的可见地表，水格用低于岸边的蓝色水面覆盖泥床；边角不复制 2D 图集的轮廓。
 4. `map/block_art.rs` 在启动时生成原创 16×16 像素纹理，用最近邻采样保持像素边缘。所有方块共享一个立方体网格，UV 分开采样顶面、侧面和底面，因此草方块的侧面能显示草沿与泥土。树、岩石和花由多个小方块组合。
 
-这是同一张分层瓦片地图的 3D 表现，不是可挖掘的体素地形。水面不透明，不含水流模拟；没有物理或碰撞。
+这是同一张分层瓦片地图的 3D 表现，不是可挖掘的体素地形。水面不透明，不含水流模拟；浅岸水面比深水更接近陆面。
 
 ## 文件
 
@@ -70,7 +83,7 @@ python3 practice/p03_aibodh_chapter1/tools/generate_sprite.py
 ## 第二章：地图生成的阅读顺序
 
 1. `map/tilemap.rs`：将 sprite 名字对应到图集中 32×32 的矩形。
-2. `map/assets.rs`：`SpawnableAsset` 用 sprite 名、网格偏移、世界偏移、组件添加函数描述生成结果；多个 sprite 可组成一棵树。
+2. `map/assets.rs`：`SpawnableAsset` 用 sprite 名、网格偏移、世界偏移和可选的拾取类型描述生成结果；多个 sprite 可组成一棵树。
 3. `map/models.rs`：`TerrainModelBuilder` 将模型和 sprite 绑定放在同一索引，避免错配。
 4. `map/sockets.rs`：创建水平材料、边缘和上下层 socket。
 5. `map/rules.rs`：泥土 → 绿草 → 黄草 → 水 → 装饰五层；透明模型表示该层空白。黄草只能在完整绿草上，装饰物底部只能连接水层的透明陆地；大树左右基座必须配对。
@@ -80,10 +93,10 @@ python3 practice/p03_aibodh_chapter1/tools/generate_sprite.py
 
 - `generate.rs` 的 `MAP_SEED = 42`：修改数字并重启可得到另一张可复现的地图。固定种子不保证所有种子都能在重试预算内成功。
 - `GRID_X/GRID_Y` 控制地图宽高，`GRID_Z = 5` 对应规则中的五层。
-- `rules.rs` 的 `WATER_WEIGHT = 0.07` 使用文章最后的水密度配置；改小可减少水的倾向，但权重不是精确百分比。
+- `rules.rs` 的 `WATER_WEIGHT = 0.07` 保留现有小地图的水密度，让默认种子同时展示浅岸与深水；它不是精确百分比。
 - 小地图在 `Startup` 同步生成，最多重试 50 次，失败明确报错。没有使用库中失败后逐帧无限重试的 simple plugin；生成核心仍是教程指定的 WFC 库。
 - 装饰层外围固定为空白，防止边界生成半棵大树；树干的上方通过 `canopy_space` socket 要求空白装饰格，避免树冠与其他装饰重叠。树冠可延伸到水面上，但树干基座仍只在陆地。
-- 地形严格按 z 层叠，不启用按 y 的额外深度偏移；玩家 z 为 10，高于地形/树木。本章不实现树冠遮挡人物的动态深度排序。
+- 地表固定按层叠放；只有装饰和角色进入以基座 Y 排序的绘制层。
 - WFC 保证局部连接规则，不保证一定出现湖泊、所有装饰种类或可通行路线。
 
 ### 地形图集许可
@@ -94,4 +107,4 @@ python3 practice/p03_aibodh_chapter1/tools/generate_sprite.py
 
 ## 测试范围
 
-角色测试在无窗口 Bevy App 中加载真实 RON，验证两种模式的移动、换角、选帧及一次性跳跃，并核对角色 PNG 的图集尺寸。地图测试验证可复现性、地形层次、装饰基座、树木配对、方块贴图及水面高度。实际 GPU 渲染和键盘手感仍需启动验证。
+角色测试在无窗口 Bevy App 中加载真实 RON，验证两种模式的移动、换角、选帧及一次性跳跃，并核对角色 PNG 的图集尺寸。地图测试验证可复现性、地形与贴图，以及浅岸/深水、穿透防护、滑动和安全出生点；角色测试也覆盖暂停和恢复。实际 GPU 渲染和键盘手感仍需启动验证。

@@ -6,7 +6,7 @@ use super::{
     config::Character,
     motion::Player,
 };
-use crate::map::generate::{PLAYER_Z, TILE_SIZE};
+use crate::map::generate::{TILE_SIZE, depth_from_feet};
 
 #[derive(Component)]
 pub(super) struct DisplayedCharacter(usize);
@@ -48,8 +48,11 @@ pub(super) fn draw_player(
     let height = player.lift * 20.0;
     match *mode {
         CharactersPlugin::Sprites2d => {
-            transform.translation =
-                Vec3::new(player.position.x, player.position.y + height, PLAYER_Z);
+            transform.translation = Vec3::new(
+                player.position.x,
+                player.position.y + height + entry.tile_size as f32 / 3.0,
+                depth_from_feet(player.position.y) + 0.0001,
+            );
             let index = (frame.y * entry.atlas_columns + frame.x) as usize;
             if changed {
                 let layout = layouts.add(TextureAtlasLayout::from_grid(

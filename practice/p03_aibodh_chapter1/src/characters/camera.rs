@@ -1,6 +1,7 @@
 use std::f32::consts::{PI, TAU};
 
 use bevy::{
+    camera::ScalingMode,
     input::mouse::AccumulatedMouseMotion,
     prelude::*,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
@@ -13,10 +14,54 @@ const ARM_LENGTH: f32 = 4.8;
 const EYE_HEIGHT: f32 = 0.9;
 const MIN_ARM: f32 = 0.25;
 const CLEARANCE: f32 = 0.16;
+const FOLLOW_SPEED: f32 = 6.0;
+const ARM_RECOVERY_SPEED: f32 = 12.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
 
 #[derive(Component)]
 pub(super) struct FollowCamera;
+
+#[derive(Component, Default)]
+pub(super) struct FollowCamera2d(Option<Vec2>);
+
+fn follow_weight(speed: f32, time: &Time) -> f32 {
+    1.0 - (-speed * time.delta_secs()).exp()
+}
+
+pub(super) fn spawn_camera_2d(mut commands: Commands) {
+    // Zoom the projection rather than rescaling sprites, collisions and player speeds.
+    commands.spawn((
+        Camera2d,
+        FollowCamera2d::default(),
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: ScalingMode::FixedVertical {
+                viewport_height: 10.0 * TILE_SIZE,
+            },
+            ..OrthographicProjection::default_2d()
+        }),
+    ));
+}
+
+pub(super) fn follow_player_2d(
+    time: Res<Time>,
+    player: Single<&Player>,
+    mut camera: Single<(&mut Transform, &mut FollowCamera2d)>,
+) {
+    let (transform, follow) = &mut *camera;
+    let position = follow.0.map_or(player.position, |current| {
+        current.lerp(player.position, follow_weight(FOLLOW_SPEED, &time))
+    });
+    // Retain the unrounded accumulator so slow convergence never gets stuck.
+    follow.0 = Some(position);
+    transform.translation.x = position.x.round();
+    transform.translation.y = position.y.round();
+}
+
+#[derive(Component)]
+pub(super) struct FollowRig3d {
+    pivot: Option<Vec3>,
+    arm: f32,
+}
 
 #[derive(Resource)]
 pub(super) struct Orbit {
@@ -58,6 +103,10 @@ pub(super) fn spawn_camera(mut commands: Commands, orbit: Res<Orbit>) {
     commands.spawn((
         Name::new("Third-person camera"),
         FollowCamera,
+        FollowRig3d {
+            pivot: None,
+            arm: ARM_LENGTH,
+        },
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
             fov: PI / 3.0,
@@ -75,13 +124,12 @@ pub(super) fn read_mouse(
     mut orbit: ResMut<Orbit>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     buttons: Res<ButtonInput<MouseButton>>,
-    keys: Res<ButtonInput<KeyCode>>,
     mut window: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
 ) {
     let Ok((window, mut cursor)) = window.single_mut() else {
         return;
     };
-    if !window.focused || keys.just_pressed(KeyCode::Escape) {
+    if !window.focused {
         if cursor.grab_mode != CursorGrabMode::None {
             cursor.grab_mode = CursorGrabMode::None;
             cursor.visible = true;
@@ -97,31 +145,45 @@ pub(super) fn read_mouse(
 }
 
 pub(super) fn follow_player(
+    time: Res<Time>,
     orbit: Res<Orbit>,
     player: Query<&Player>,
     obstacles: Query<&Transform, With<CameraObstacle>>,
-    mut camera: Query<&mut Transform, (With<FollowCamera>, Without<CameraObstacle>)>,
+    mut camera: Query<
+        (&mut Transform, &mut FollowRig3d),
+        (With<FollowCamera>, Without<CameraObstacle>),
+    >,
 ) {
-    let (Ok(player), Ok(mut camera)) = (player.single(), camera.single_mut()) else {
+    let (Ok(player), Ok((mut camera, mut rig))) = (player.single(), camera.single_mut()) else {
         return;
     };
     // Follow the player's ground track rather than bouncing with the jump animation.
-    let pivot = ground_position(player.position) + Vec3::Y * EYE_HEIGHT;
+    let target = ground_position(player.position) + Vec3::Y * EYE_HEIGHT;
+    let pivot = rig.pivot.map_or(target, |previous| {
+        previous.lerp(target, follow_weight(FOLLOW_SPEED, &time))
+    });
+    rig.pivot = Some(pivot);
     let rotation = orbit.rotation();
     let back = rotation * Vec3::Z;
-    let arm = obstacles.iter().fold(ARM_LENGTH, |arm, block| {
+    let clear_arm = obstacles.iter().fold(ARM_LENGTH, |arm, block| {
         let half_size = block.scale * 0.5 + Vec3::splat(CLEARANCE);
         match box_entry(pivot - block.translation, back, half_size) {
             Some(distance) => arm.min(distance.max(MIN_ARM)),
             None => arm,
         }
     });
-    camera.translation = pivot + back * arm;
+    // Retract immediately to avoid clipping; ease the return to full distance.
+    rig.arm = if clear_arm <= rig.arm {
+        clear_arm
+    } else {
+        rig.arm + (clear_arm - rig.arm) * follow_weight(ARM_RECOVERY_SPEED, &time)
+    };
+    camera.translation = pivot + back * rig.arm;
     camera.rotation = rotation;
 }
 
 // Ray vs. an axis-aligned box, in box-local coordinates. Ignore boxes containing
-// the pivot: player movement itself still doesn't collide with terrain.
+// the pivot: a canopy can overhang the player’s ground position.
 fn box_entry(origin: Vec3, direction: Vec3, half: Vec3) -> Option<f32> {
     let (mut enter, mut exit) = (f32::NEG_INFINITY, f32::INFINITY);
     for axis in 0..3 {

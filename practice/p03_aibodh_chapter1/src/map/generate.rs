@@ -1,8 +1,12 @@
+use crate::inventory::Pickable;
 use bevy::prelude::*;
-use bevy_procedural_tilemaps::{prelude::*, spawner::spawn_node};
+use bevy_procedural_tilemaps::{
+    prelude::*, proc_gen::generator::model::ModelInstance, spawner::spawn_node,
+};
 
 use super::{
     assets::{SpawnableAsset, load_assets, prepare_tilemap_handles},
+    collision::CollisionMap,
     rules::build_world,
 };
 
@@ -10,10 +14,25 @@ pub const GRID_X: u32 = 25;
 pub const GRID_Y: u32 = 18;
 pub const GRID_Z: u32 = 5;
 pub const TILE_SIZE: f32 = 32.0;
+pub(crate) const TILEMAP_IMAGE: &str = "tile_layers/tilemap.png";
 // 固定种子便于教学复现；换成其他数字即可得到另一张地图。
 pub const MAP_SEED: u64 = 42;
-// 玩家高于地形及装饰层；本章不实现人物/树木的动态遮挡。
-pub const PLAYER_Z: f32 = 10.0;
+// Ground layers occupy Z < 4; props and players share the next layer.
+pub(crate) fn depth_from_feet(y: f32) -> f32 {
+    5.0 - (y / (TILE_SIZE * GRID_Y as f32) + 0.5).clamp(0.0, 1.0)
+}
+
+pub(super) fn collision_from_models<'a>(
+    generator: &TerrainGenerator,
+    definitions: &[Vec<SpawnableAsset>],
+    data: impl Iterator<Item = &'a ModelInstance>,
+) -> CollisionMap {
+    CollisionMap::from_tiles(data.enumerate().filter_map(|(i, instance)| {
+        let asset = definitions[instance.model_index].first()?;
+        let pos = generator.grid().pos_from_index(i);
+        Some((pos.x, pos.y, asset.sprite_name()))
+    }))
+}
 
 pub type TerrainGenerator = Generator<Cartesian3D, CartesianGrid<Cartesian3D>>;
 
@@ -67,13 +86,13 @@ pub fn setup_map(
         "Generated {} terrain cells with seed {MAP_SEED}: {info:?}",
         data.iter().count()
     );
-    let handles = prepare_tilemap_handles(&server, &mut layouts, "tile_layers", "tilemap.png");
+    commands.insert_resource(collision_from_models(&generator, &definitions, data.iter()));
+    let handles = prepare_tilemap_handles(&server, &mut layouts, TILEMAP_IMAGE);
     let spawner = NodesSpawner::new(
-        load_assets(&handles, definitions),
+        load_assets(&handles, &definitions),
         Vec3::new(TILE_SIZE, TILE_SIZE, 1.0),
         Vec3::ONE,
     );
-    // 关闭按 y 加 z：避免低层前景盖住高层背景地形。
     let parent = commands
         .spawn((
             Name::new("Generated terrain"),
@@ -86,9 +105,31 @@ pub fn setup_map(
         ))
         .id();
     for (index, instance) in data.iter().enumerate() {
+        let pos = generator.grid().pos_from_index(index);
+        let props = pos.z == GRID_Z - 1;
+        let mut prop_parent = parent;
+        if props && spawner.assets.get(&instance.model_index).is_some() {
+            // Both halves of a tree use the BASE row, not the canopy sprite's Y.
+            let center = CollisionMap::center(UVec2::new(pos.x, pos.y));
+            prop_parent = commands
+                .spawn((
+                    Transform::from_xyz(0.0, 0.0, depth_from_feet(center.y) - 4.5),
+                    Visibility::default(),
+                    ChildOf(parent),
+                ))
+                .id();
+            if let Some(kind) = definitions[instance.model_index]
+                .first()
+                .and_then(|asset| asset.pickup)
+            {
+                commands
+                    .entity(prop_parent)
+                    .insert(Pickable::new(kind, center));
+            }
+        }
         spawn_node(
             &mut commands,
-            parent,
+            prop_parent,
             generator.grid(),
             &spawner,
             instance,

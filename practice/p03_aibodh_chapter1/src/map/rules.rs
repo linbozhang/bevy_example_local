@@ -1,5 +1,6 @@
 //! Adapted from AIBodh Chapter 2 (MIT); see ../../LICENSE-MIT.
 // src/map/rules.rs
+use crate::inventory::ItemKind;
 use crate::map::assets::SpawnableAsset;
 use crate::map::models::TerrainModelBuilder;
 use crate::map::sockets::*;
@@ -600,11 +601,17 @@ pub fn build_props_layer(
     terrain_model_builder.create_model(rock_prop.clone(), vec![SpawnableAsset::new("rock_3")]);
     terrain_model_builder.create_model(rock_prop.clone(), vec![SpawnableAsset::new("rock_4")]);
 
-    // Plants
-    terrain_model_builder.create_model(plant_prop.clone(), vec![SpawnableAsset::new("plant_1")]);
-    terrain_model_builder.create_model(plant_prop.clone(), vec![SpawnableAsset::new("plant_2")]);
-    terrain_model_builder.create_model(plant_prop.clone(), vec![SpawnableAsset::new("plant_3")]);
-    terrain_model_builder.create_model(plant_prop.clone(), vec![SpawnableAsset::new("plant_4")]);
+    for (sprite, item) in [
+        ("plant_1", ItemKind::Herb),
+        ("plant_2", ItemKind::Flower),
+        ("plant_3", ItemKind::Mushroom),
+        ("plant_4", ItemKind::Fern),
+    ] {
+        terrain_model_builder.create_model(
+            plant_prop.clone(),
+            vec![SpawnableAsset::new(sprite).with_pickup(item)],
+        );
+    }
 
     // A canopy requires an empty prop cell immediately above its trunk.
     socket_collection.add_connections(vec![(

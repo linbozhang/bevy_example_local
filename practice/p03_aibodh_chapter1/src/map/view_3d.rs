@@ -1,8 +1,10 @@
+use crate::inventory::{ItemKind, Pickable};
 use bevy::prelude::*;
 
 use super::{
     block_art::{BlockArt, block_mesh},
-    generate::{GRID_X, GRID_Y, MAP_SEED, create_generator},
+    collision::Tile,
+    generate::{GRID_X, GRID_Y, MAP_SEED, collision_from_models, create_generator},
 };
 
 // 一格对应一个 3D 世界单位，不沿用 2D 版的 32 像素尺寸。
@@ -58,15 +60,63 @@ struct BlockPalette {
 }
 
 impl BlockPalette {
-    fn spawn(&self, commands: &mut Commands, name: &str, art: BlockArt, center: Vec3, size: Vec3) {
-        commands.spawn((
+    fn block(&self, name: &str, art: BlockArt, center: Vec3, size: Vec3) -> impl Bundle {
+        (
             Name::new(name.to_owned()),
-            CameraObstacle,
             Mesh3d(self.mesh.clone()),
             MeshMaterial3d(self.materials[art as usize].clone()),
             Transform::from_translation(center).with_scale(size),
+        )
+    }
+
+    fn spawn(&self, commands: &mut Commands, name: &str, art: BlockArt, center: Vec3, size: Vec3) {
+        commands.spawn((
+            self.block(name, art, center, size),
             ChildOf(self.parent),
+            CameraObstacle,
         ));
+    }
+
+    fn spawn_pickup(&self, commands: &mut Commands, name: &str, center: Vec2, kind: ItemKind) {
+        let ground = Vec2::new(center.x, -center.y) * super::generate::TILE_SIZE;
+        let root = commands
+            .spawn((
+                Name::new(name.to_owned()),
+                Pickable::new(kind, ground),
+                Transform::from_xyz(center.x, LAND_TOP, center.y),
+                Visibility::default(),
+                ChildOf(self.parent),
+            ))
+            .id();
+        let parts: &[(BlockArt, [f32; 3], [f32; 3])] = match kind {
+            ItemKind::Herb => &[
+                (BlockArt::Stem, [0.0, 0.14, 0.0], [0.10, 0.28, 0.10]),
+                (BlockArt::Leaves, [-0.09, 0.20, 0.0], [0.18, 0.08, 0.14]),
+                (BlockArt::Leaves, [0.08, 0.28, 0.0], [0.17, 0.08, 0.13]),
+            ],
+            ItemKind::Flower => &[
+                (BlockArt::Stem, [0.0, 0.20, 0.0], [0.08, 0.40, 0.08]),
+                (BlockArt::Leaves, [0.09, 0.23, 0.0], [0.14, 0.08, 0.12]),
+                (BlockArt::Flower, [0.0, 0.43, 0.0], [0.25, 0.12, 0.25]),
+            ],
+            ItemKind::Mushroom => &[
+                (BlockArt::Bark, [0.0, 0.10, 0.0], [0.12, 0.20, 0.12]),
+                (BlockArt::Flower, [0.0, 0.22, 0.0], [0.33, 0.13, 0.33]),
+                (BlockArt::Flower, [0.0, 0.31, 0.0], [0.21, 0.07, 0.21]),
+            ],
+            ItemKind::Fern => &[
+                (BlockArt::Stem, [0.0, 0.13, 0.0], [0.09, 0.26, 0.09]),
+                (BlockArt::Leaves, [0.0, 0.21, 0.0], [0.38, 0.08, 0.12]),
+                (BlockArt::Leaves, [0.0, 0.29, 0.0], [0.25, 0.08, 0.12]),
+                (BlockArt::Leaves, [0.0, 0.37, 0.0], [0.13, 0.08, 0.12]),
+            ],
+        };
+        for &(art, offset, size) in parts {
+            commands.spawn((
+                self.block("Pickup detail", art, offset.into(), size.into()),
+                ChildOf(root),
+            ));
+        }
     }
 
     fn spawn_prop(&self, commands: &mut Commands, kind: TileKind, name: &str, center: Vec2) {
@@ -122,39 +172,6 @@ impl BlockPalette {
                     0.36,
                 );
             }
-            TileKind::Plant => {
-                part(name, BlockArt::Stem, 0.0, 0.0, 0.0, 0.07, 0.40, 0.07);
-                part(
-                    "Plant leaf",
-                    BlockArt::Leaves,
-                    -0.09,
-                    0.15,
-                    0.0,
-                    0.11,
-                    0.08,
-                    0.12,
-                );
-                part(
-                    "Plant leaf",
-                    BlockArt::Leaves,
-                    0.09,
-                    0.23,
-                    0.0,
-                    0.11,
-                    0.08,
-                    0.12,
-                );
-                part(
-                    "Flower head",
-                    BlockArt::Flower,
-                    0.0,
-                    0.40,
-                    0.0,
-                    0.23,
-                    0.16,
-                    0.23,
-                );
-            }
             TileKind::Stump => part(name, BlockArt::Bark, 0.0, 0.0, 0.0, 0.46, 0.29, 0.46),
             _ => unreachable!("expected a decoration tile"),
         }
@@ -176,6 +193,7 @@ pub(super) fn setup_map_3d(
         data.iter().count()
     );
 
+    let collision = collision_from_models(&generator, &definitions, data.iter());
     let mut surfaces = [TileKind::Dirt; CELL_COUNT];
     let mut props = [None; CELL_COUNT];
     // WFC 从底层往上枚举；同一列只显示最高的地表类型，装饰仍单独生成。
@@ -191,7 +209,7 @@ pub(super) fn setup_map_3d(
             TileKind::Dirt | TileKind::Grass | TileKind::YellowGrass | TileKind::Water => {
                 surfaces[cell] = kind
             }
-            _ => props[cell] = Some((kind, name)),
+            _ => props[cell] = Some((kind, name, asset.pickup)),
         }
     }
 
@@ -223,15 +241,27 @@ pub(super) fn setup_map_3d(
             TileKind::YellowGrass => layer("dry grass", BlockArt::DryGrass, 0.0, LAND_TOP),
             TileKind::Water => {
                 layer("lake bed", BlockArt::Dirt, 0.0, LAKE_BED);
-                layer("water", BlockArt::Water, LAKE_BED, WATER_TOP);
+                let shallow = collision.surface(UVec2::new(i as u32 % GRID_X, i as u32 / GRID_X))
+                    == Tile::Shore;
+                layer(
+                    "water",
+                    BlockArt::Water,
+                    LAKE_BED,
+                    if shallow { LAND_TOP - 0.06 } else { WATER_TOP },
+                );
             }
             _ => unreachable!("expected a terrain tile"),
         }
-        if let Some((kind, name)) = prop {
-            palette.spawn_prop(&mut commands, kind, name, center);
+        if let Some((kind, name, pickup)) = prop {
+            if let Some(item) = pickup {
+                palette.spawn_pickup(&mut commands, name, center, item);
+            } else {
+                palette.spawn_prop(&mut commands, kind, name, center);
+            }
         }
     }
 
+    commands.insert_resource(collision);
     commands.insert_resource(ClearColor(Color::srgb(0.60, 0.76, 0.88)));
     commands.insert_resource(GlobalAmbientLight {
         brightness: 170.0,
@@ -284,7 +314,9 @@ mod tests {
         }));
         let ground: Vec<_> = blocks
             .iter()
-            .filter(|(_, _, _, t)| t.translation.y - t.scale.y * 0.5 == 0.0)
+            .filter(|(name, _, _, t)| {
+                name.as_str() != "Pickup detail" && t.translation.y - t.scale.y * 0.5 == 0.0
+            })
             .collect();
         assert_eq!(ground.len(), CELL_COUNT);
         let sum: Vec3 = ground.iter().map(|(_, _, _, t)| t.translation).sum();

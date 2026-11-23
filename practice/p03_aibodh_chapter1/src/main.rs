@@ -1,14 +1,21 @@
-use bevy::prelude::*;
+use bevy::{
+    prelude::*,
+    window::{MonitorSelection, WindowMode},
+};
 
 mod characters;
+mod game_state;
+mod inventory;
 mod map;
 
 fn main() {
-    let sprites_2d = std::env::args().skip(1).any(|arg| arg == "--2d");
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    let sprites_2d = args.iter().any(|arg| arg == "--2d");
+    let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
     let (title, background) = if sprites_2d {
-        ("AIBodh Chapter 3 — 2D", Color::BLACK)
+        ("AIBodh Chapter 5 — 2D", Color::BLACK)
     } else {
-        ("AIBodh Chapter 3 — 3D", Color::srgb(0.11, 0.15, 0.21))
+        ("AIBodh Chapter 5 — 3D", Color::srgb(0.11, 0.15, 0.21))
     };
 
     let mut app = App::new();
@@ -24,13 +31,19 @@ fn main() {
                 primary_window: Some(Window {
                     title: title.into(),
                     resolution: (1920, 1080).into(),
+                    mode: if fullscreen {
+                        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                    } else {
+                        WindowMode::Windowed
+                    },
                     ..default()
                 }),
                 ..default()
             }),
     );
+    app.add_plugins(game_state::GameStatePlugin);
     if sprites_2d {
-        app.add_systems(Startup, setup_camera).add_plugins((
+        app.add_plugins((
             map::MapPlugin::Sprites2d,
             characters::CharactersPlugin::Sprites2d,
         ));
@@ -40,9 +53,9 @@ fn main() {
             characters::CharactersPlugin::Billboard3d,
         ));
     }
+    app.add_plugins((
+        characters::collision_debug::CollisionDebugPlugin,
+        inventory::InventoryPlugin,
+    ));
     app.run();
-}
-
-fn setup_camera(mut commands: Commands) {
-    commands.spawn(Camera2d);
 }

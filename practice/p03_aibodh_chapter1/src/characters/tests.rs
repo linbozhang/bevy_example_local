@@ -17,8 +17,11 @@ use super::{
 };
 use crate::map::{
     CameraObstacle,
-    generate::{PLAYER_Z, TILE_SIZE},
+    collision::CollisionMap,
+    generate::{TILE_SIZE, depth_from_feet},
 };
+
+use crate::game_state::{GameState, LoadingError};
 
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/assets");
 
@@ -30,8 +33,12 @@ fn test_app(mode: CharactersPlugin) -> (App, Entity) {
             file_path: ASSETS.into(),
             ..default()
         },
+        bevy::state::app::StatesPlugin,
+        crate::game_state::GameStatePlugin,
         mode,
+        crate::inventory::InventoryPlugin,
     ))
+    .init_resource::<CollisionMap>()
     .init_asset::<Image>()
     .register_asset_loader(ImageLoader::new(CompressedImageFormats::empty()))
     .init_asset::<Mesh>()
@@ -42,17 +49,22 @@ fn test_app(mode: CharactersPlugin) -> (App, Entity) {
     .init_resource::<ButtonInput<KeyCode>>()
     .init_resource::<Time>();
     app.update();
+    assert_eq!(
+        *app.world().resource::<State<GameState>>().get(),
+        GameState::Loading
+    );
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let world = app.world();
         let handle = &world.resource::<RosterHandle>().0;
-        if world.resource::<Assets<Roster>>().get(handle).is_some() {
+        if *world.resource::<State<GameState>>().get() == GameState::Playing {
             break;
         }
         let state = world.resource::<AssetServer>().get_load_state(handle.id());
         assert!(
             !matches!(state, Some(LoadState::Failed(_))) && Instant::now() < deadline,
-            "could not load roster: {state:?}"
+            "could not load game: {state:?}, {:?}",
+            world.resource::<LoadingError>().0
         );
         thread::sleep(Duration::from_millis(2));
         app.update();
@@ -118,7 +130,12 @@ fn both_modes_share_character_selection_movement_and_animation() {
         assert!((walk.length() - 70.0).abs() < 0.001);
         let rendered = app.world().get::<Transform>(entity).unwrap().translation;
         match mode {
-            CharactersPlugin::Sprites2d => assert_eq!(rendered, walk.extend(PLAYER_Z)),
+            CharactersPlugin::Sprites2d => {
+                assert_eq!(
+                    rendered,
+                    (walk + Vec2::Y * (64.0 / 3.0)).extend(depth_from_feet(walk.y) + 0.0001)
+                )
+            }
             CharactersPlugin::Billboard3d => {
                 let billboard = app.world().get::<Transform>(entity).unwrap();
                 let feet = rendered - billboard.rotation * Vec3::Y * (billboard.scale.y / 3.0);
@@ -200,22 +217,33 @@ fn third_person_camera_follows_and_retracts_around_blocks() {
     let updated = *app.world().get::<Transform>(camera).unwrap();
     let traveled = app.world().get::<Player>(player).unwrap().position;
     assert!(traveled.abs_diff_eq(Vec2::Y * 35.0, 1e-5));
+    let target = initial.translation + Vec3::NEG_Z * 35.0 / TILE_SIZE;
+    assert!(target.z < updated.translation.z && updated.translation.z < initial.translation.z);
+    step(&mut app, 2.0, &[]);
     assert!(
-        (updated.translation - initial.translation)
-            .abs_diff_eq(Vec3::NEG_Z * 35.0 / TILE_SIZE, 1e-5)
+        app.world()
+            .get::<Transform>(camera)
+            .unwrap()
+            .translation
+            .abs_diff_eq(target, 1e-5)
     );
 
     let obstacle = app
         .world_mut()
         .spawn((
             CameraObstacle,
-            Transform::from_translation(updated.translation + *updated.forward() * 2.0),
+            Transform::from_translation(target + *updated.forward() * 2.0),
         ))
         .id();
     step(&mut app, 0.0, &[]);
-    let shortened = app.world().get::<Transform>(camera).unwrap();
-    assert!((shortened.translation - updated.translation).dot(*updated.forward()) > 2.0);
+    let shortened = *app.world().get::<Transform>(camera).unwrap();
+    assert!((shortened.translation - target).dot(*updated.forward()) > 2.0);
     app.world_mut().despawn(obstacle);
+    step(&mut app, 0.05, &[]);
+    let recovering = app.world().get::<Transform>(camera).unwrap().translation;
+    assert!(recovering.distance(target) < shortened.translation.distance(target));
+    assert!(recovering.distance(target) > 0.1);
+    step(&mut app, 2.0, &[]);
     step(&mut app, 0.01, &[KeyCode::Space]);
     step(&mut app, 0.15, &[]);
     assert!(app.world().get::<Player>(player).unwrap().lift > 0.0);
@@ -224,7 +252,7 @@ fn third_person_camera_follows_and_retracts_around_blocks() {
             .get::<Transform>(camera)
             .unwrap()
             .translation
-            .abs_diff_eq(updated.translation, 1e-5)
+            .abs_diff_eq(target, 1e-5)
     );
 }
 
@@ -267,4 +295,154 @@ fn mouse_orbit_changes_forward_movement_and_escape_releases_cursor() {
     let cursor = app.world().get::<CursorOptions>(window).unwrap();
     assert_eq!(cursor.grab_mode, CursorGrabMode::None);
     assert!(cursor.visible);
+}
+
+#[test]
+fn pause_freezes_gameplay_and_resume_does_not_spawn_another_player() {
+    for mode in [CharactersPlugin::Sprites2d, CharactersPlugin::Billboard3d] {
+        let (mut app, entity) = test_app(mode);
+        step(&mut app, 0.1, &[KeyCode::ArrowRight]);
+        let world = app.world();
+        let before = *world.get::<Transform>(entity).unwrap();
+        step(
+            &mut app,
+            1.0,
+            &[KeyCode::Escape, KeyCode::ArrowRight, KeyCode::Digit6],
+        );
+        assert_eq!(
+            *app.world().resource::<State<GameState>>().get(),
+            GameState::Paused
+        );
+        step(&mut app, 1.0, &[KeyCode::ArrowRight, KeyCode::Digit6]);
+        assert_eq!(*app.world().get::<Transform>(entity).unwrap(), before);
+        check_frame(&app, entity, 0, 3, "characters/adventurer.png");
+        step(&mut app, 0.1, &[KeyCode::Escape, KeyCode::ArrowRight]);
+        assert_eq!(
+            *app.world().resource::<State<GameState>>().get(),
+            GameState::Playing
+        );
+        assert!(app.world().get::<Transform>(entity).unwrap().translation.x > before.translation.x);
+        let world = app.world_mut();
+        assert_eq!(
+            world
+                .query_filtered::<Entity, With<Player>>()
+                .single(world)
+                .unwrap(),
+            entity
+        );
+    }
+}
+
+#[test]
+fn both_modes_apply_collisions_to_player_velocity() {
+    for mode in [CharactersPlugin::Sprites2d, CharactersPlugin::Billboard3d] {
+        let (mut app, entity) = test_app(mode);
+        let rock = CollisionMap::center(UVec2::new(14, 9));
+        app.world_mut()
+            .insert_resource(CollisionMap::from_tiles([(14, 9, "rock_1")]));
+        app.world_mut().get_mut::<Player>(entity).unwrap().position = rock - Vec2::X * TILE_SIZE;
+        step(&mut app, 1.0, &[KeyCode::ArrowRight, KeyCode::ShiftLeft]);
+        let position = app.world().get::<Player>(entity).unwrap().position;
+        assert!(position.x > rock.x - TILE_SIZE && position.x < rock.x);
+        assert!(app.world().resource::<CollisionMap>().can_stand(position));
+    }
+}
+
+#[test]
+fn zoomed_2d_camera_settles_after_player_stops() {
+    let (mut app, entity) = test_app(CharactersPlugin::Sprites2d);
+    let world = app.world_mut();
+    let camera = world
+        .query_filtered::<Entity, With<Camera2d>>()
+        .single(world)
+        .unwrap();
+    step(&mut app, 0.2, &[KeyCode::ArrowRight]);
+    let target = app
+        .world()
+        .get::<Player>(entity)
+        .unwrap()
+        .position
+        .x
+        .round();
+    let first = app.world().get::<Transform>(camera).unwrap().translation.x;
+    assert!(0.0 < first && first < target);
+    for _ in 0..120 {
+        step(&mut app, 1.0 / 60.0, &[]);
+    }
+    assert_eq!(
+        app.world().get::<Transform>(camera).unwrap().translation.x,
+        target
+    );
+}
+
+#[test]
+fn pickups_in_both_modes_update_the_hud_and_despawn_the_whole_item() {
+    use crate::inventory::{ItemKind, Pickable};
+    for mode in [CharactersPlugin::Sprites2d, CharactersPlugin::Billboard3d] {
+        let (mut app, _) = test_app(mode);
+        let item = app
+            .world_mut()
+            .spawn(Pickable::new(ItemKind::Mushroom, Vec2::X * 54.0))
+            .id();
+        let detail = app.world_mut().spawn(ChildOf(item)).id();
+        let distant = app
+            .world_mut()
+            .spawn(Pickable::new(ItemKind::Herb, Vec2::Y * 100.0))
+            .id();
+        step(&mut app, 0.0, &[]);
+        assert!(app.world().get_entity(item).is_ok());
+        step(&mut app, 0.2, &[KeyCode::Escape, KeyCode::ArrowRight]);
+        assert!(app.world().get_entity(item).is_ok());
+        step(&mut app, 0.2, &[KeyCode::Escape, KeyCode::ArrowRight]);
+        assert!(app.world().get_entity(item).is_err());
+        assert!(app.world().get_entity(detail).is_err());
+        assert!(app.world().get_entity(distant).is_ok());
+        step(&mut app, 0.0, &[KeyCode::Digit6]);
+        let world = app.world_mut();
+        assert!(
+            world
+                .query::<&Text>()
+                .iter(world)
+                .any(|text| text.0 == "Inventory: Mushroom: 1")
+        );
+    }
+}
+
+#[test]
+fn generated_maps_spawn_matching_pickups() {
+    use crate::{inventory::Pickable, map::MapPlugin};
+    let mut maps = [MapPlugin::Sprites2d, MapPlugin::Blocks3d]
+        .map(|mode| {
+            let mut app = App::new();
+            app.add_plugins((
+                bevy::app::TaskPoolPlugin::default(),
+                AssetPlugin {
+                    file_path: ASSETS.into(),
+                    ..default()
+                },
+                mode,
+            ))
+            .init_asset::<Image>()
+            .register_asset_loader(ImageLoader::new(CompressedImageFormats::empty()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<TextureAtlasLayout>();
+            app.update();
+            let world = app.world_mut();
+            let mut items: Vec<_> = world
+                .query::<(&Pickable, &Children)>()
+                .iter(world)
+                .map(|(item, children)| {
+                    assert!(!children.is_empty());
+                    assert!(world.resource::<CollisionMap>().can_stand(item.position));
+                    (item.kind, item.position.x as i32, item.position.y as i32)
+                })
+                .collect();
+            items.sort_unstable();
+            items
+        })
+        .into_iter();
+    let two_d = maps.next().unwrap();
+    assert!(!two_d.is_empty());
+    assert_eq!(two_d, maps.next().unwrap());
 }
