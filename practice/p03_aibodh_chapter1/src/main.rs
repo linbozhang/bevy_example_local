@@ -6,7 +6,7 @@ mod player;
 fn main() {
     let sprites_2d = std::env::args().skip(1).any(|arg| arg == "--2d");
     let (title, background) = if sprites_2d {
-        ("AIBodh Chapters 1–2 — Arrow keys to explore", Color::WHITE)
+        ("AIBodh Chapters 1–2", Color::BLACK)
     } else {
         (
             "AIBodh Chapter 2 — 3D WFC terrain",
@@ -26,7 +26,7 @@ fn main() {
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: title.into(),
-                    resolution: (960, 640).into(),
+                    resolution: (1920, 1080).into(),
                     ..default()
                 }),
                 ..default()
