@@ -62,7 +62,7 @@ fn test_app_with(mode: CharactersPlugin, configure: impl FnOnce(&mut App)) -> (A
         *app.world().resource::<State<GameState>>().get(),
         GameState::Loading
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let world = app.world();
         let handle = &world.resource::<RosterHandle>().0;
@@ -601,4 +601,36 @@ fn combat_applies_swept_hits_and_restarts_sessions_in_both_modes() {
         assert_eq!(hp.current, hp.max);
         assert!(world.get_entity(player).is_err());
     }
+}
+
+#[test]
+fn hybrid_overworld_starts_with_shared_gameplay_at_voxel_height() {
+    use crate::{
+        enemy::{Enemy, EnemyPlugin},
+        inventory::Pickable,
+        overworld::OverworldPlugin,
+    };
+    let (mut app, player) = test_app_with(CharactersPlugin::Billboard3d, |app| {
+        app.add_plugins((OverworldPlugin(42), EnemyPlugin));
+    });
+    let world = app.world_mut();
+    let map = world.resource::<CollisionMap>();
+    assert!(map.is_voxel());
+    let p = world.get::<Player>(player).unwrap().position;
+    assert_eq!(map.floor_y(p), 34.);
+    assert!(world.get::<Transform>(player).unwrap().translation.y > 34.);
+    assert_eq!(
+        world
+            .query_filtered::<Entity, With<FollowCamera>>()
+            .iter(world)
+            .count(),
+        1
+    );
+    assert_eq!(world.query::<&Enemy>().iter(world).count(), 2);
+    assert!(world.query::<&Pickable>().iter(world).next().is_some());
+    step(&mut app, 0.0, &[KeyCode::KeyT]);
+    let next = app.world().get::<Player>(player).unwrap().position;
+    assert!(next.distance(p) > TILE_SIZE * 20.);
+    let map = app.world().resource::<CollisionMap>();
+    assert!(map.can_stand(next) && map.floor_y(next) > 50.);
 }

@@ -11,6 +11,7 @@ mod inventory;
 mod magic;
 mod map;
 mod network;
+mod overworld;
 mod particles;
 mod save;
 mod sound;
@@ -19,7 +20,27 @@ fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let sprites_2d = args.iter().any(|arg| arg == "--2d");
     let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
-    let (title, background) = if sprites_2d {
+    let voxel_seed = if let Some(index) = args.iter().position(|arg| arg == "--overworld") {
+        if sprites_2d || args.iter().any(|arg| arg == "--network") {
+            eprintln!(
+                "--overworld is an offline 3D mode; do not combine it with --2d or --network"
+            );
+            std::process::exit(2);
+        }
+        let seed = match args.get(index + 1).filter(|arg| !arg.starts_with("--")) {
+            Some(seed) => seed.parse::<u64>().unwrap_or_else(|_| {
+                eprintln!("Overworld seed must be an unsigned 64-bit integer");
+                std::process::exit(2);
+            }),
+            None => 42,
+        };
+        Some(seed)
+    } else {
+        None
+    };
+    let (title, background) = if voxel_seed.is_some() {
+        ("Voxel Overworld — 3D", Color::srgb(0.57, 0.74, 0.90))
+    } else if sprites_2d {
         ("AIBodh Chapters 8–14 — 2D", Color::BLACK)
     } else {
         ("AIBodh Chapters 8–14 — 3D", Color::srgb(0.11, 0.15, 0.21))
@@ -70,6 +91,11 @@ fn main() {
         app.add_plugins((
             map::MapPlugin::Sprites2d,
             characters::CharactersPlugin::Sprites2d,
+        ));
+    } else if let Some(seed) = voxel_seed {
+        app.add_plugins((
+            overworld::OverworldPlugin(seed),
+            characters::CharactersPlugin::Billboard3d,
         ));
     } else {
         app.add_plugins((

@@ -78,12 +78,16 @@ impl Snapshot {
 pub(super) struct Slots(PathBuf);
 
 impl Slots {
-    pub fn beside_executable() -> io::Result<Self> {
+    pub fn beside_executable(voxel: bool) -> io::Result<Self> {
         let exe = std::env::current_exe()?;
         let parent = exe
             .parent()
             .ok_or_else(|| io::Error::other("cannot locate executable directory"))?;
-        Ok(Self(parent.join("saves")))
+        Ok(Self(parent.join(if voxel {
+            "saves-overworld"
+        } else {
+            "saves"
+        })))
     }
 
     fn path(&self, slot: usize) -> Result<PathBuf, String> {

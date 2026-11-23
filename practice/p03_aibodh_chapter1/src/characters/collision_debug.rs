@@ -3,9 +3,8 @@ use bevy::{
     prelude::*,
 };
 
-use super::{CharactersPlugin, camera::ground_position, motion::Player};
+use super::{CharactersPlugin, camera::map_ground, motion::Player};
 use crate::map::{
-    LAND_TOP,
     collision::{CollisionMap, FOOT_RADIUS, Tile},
     generate::TILE_SIZE,
 };
@@ -30,7 +29,7 @@ fn draw(
         return;
     }
     let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-    let ground = |p| ground_position(p).with_y(LAND_TOP + 0.035);
+    let ground = |p| map_ground(p, &map) + Vec3::Y * 0.035;
     let color = Color::srgb(0.25, 1.0, 1.0);
     match *mode {
         CharactersPlugin::Sprites2d => {
@@ -48,7 +47,9 @@ fn draw(
             );
         }
     }
-    for (center, tile) in map.tiles() {
+    for (center, tile) in map.tiles().filter(|(p, _)| {
+        !map.is_voxel() || p.distance_squared(player.position) < (TILE_SIZE * 16.).powi(2)
+    }) {
         let (size, color) = match tile {
             Tile::Land => continue,
             Tile::Shore => (Vec2::splat(TILE_SIZE), Color::srgb(0.2, 0.9, 0.45)),

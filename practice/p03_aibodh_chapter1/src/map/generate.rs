@@ -223,6 +223,47 @@ fn stitch(
         .collect())
 }
 
+/// A finite WFC detail field in voxel coordinates. Macro terrain owns heights,
+/// water and villages; WFC supplies coherent ground variants and plant sites.
+pub(crate) struct VoxelDetails {
+    pub dry_grass: Vec<bool>,
+    pub plants: Vec<(i32, i32, crate::inventory::ItemKind)>,
+}
+
+pub(crate) fn voxel_details(seed: u64) -> Result<VoxelDetails, String> {
+    let (rules, props_void, definitions) = terrain_rules();
+    let data = stitch(seed, CHUNKS, &rules, props_void)?;
+    let mut result = VoxelDetails {
+        dry_grass: vec![false; COUNT],
+        plants: Vec::new(),
+    };
+    for (p, layer, model) in cells(&data, SIZE) {
+        let Some(asset) = definitions[model.model_index].first() else {
+            continue;
+        };
+        if layer == 2 && asset.sprite_name().starts_with("yellow_grass") {
+            result.dry_grass[(p.y * SIZE.x + p.x) as usize] = true;
+        }
+        if let Some(kind) = asset.pickup {
+            result.plants.push((
+                p.x as i32 - SIZE.x as i32 / 2,
+                SIZE.y as i32 / 2 - p.y as i32,
+                kind,
+            ));
+        }
+    }
+    Ok(result)
+}
+
+impl VoxelDetails {
+    pub fn dry_at(&self, x: i32, z: i32) -> bool {
+        let p = IVec2::new(x + SIZE.x as i32 / 2, SIZE.y as i32 / 2 - z);
+        p.cmpge(IVec2::ZERO).all()
+            && p.cmplt(SIZE.as_ivec2()).all()
+            && self.dry_grass[(p.y as u32 * SIZE.x + p.x as u32) as usize]
+    }
+}
+
 pub(super) fn build_terrain(seed: u64) -> Result<TerrainBuild, String> {
     let (rules, props_void, definitions) = terrain_rules();
     let data = stitch(seed, CHUNKS, &rules, props_void)?;

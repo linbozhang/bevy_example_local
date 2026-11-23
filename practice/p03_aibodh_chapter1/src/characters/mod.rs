@@ -10,7 +10,7 @@ use crate::{
     map::collision::CollisionMap,
 };
 use bevy::{asset::LoadState, prelude::*};
-pub(crate) use camera::{FollowCamera, Orbit, ground_position};
+pub(crate) use camera::{FollowCamera, Orbit, ground_position, map_ground};
 use config::RosterLoader;
 pub(crate) use config::{Action, Character, Roster};
 pub(crate) use motion::Player;

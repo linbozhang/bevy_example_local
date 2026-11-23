@@ -1,7 +1,10 @@
 //! Shared ground-plane collision in 2D pixels, regardless of renderer.
 use bevy::prelude::*;
 
-use super::generate::{COUNT, SIZE, TILE_SIZE};
+use super::{
+    LAND_TOP,
+    generate::{COUNT, SIZE, TILE_SIZE},
+};
 
 pub(crate) const FOOT_RADIUS: f32 = 7.0;
 
@@ -14,13 +17,14 @@ pub(crate) enum Tile {
     Tree,
     Rock,
     Stump,
+    Wall,
 }
 
 impl Tile {
     pub fn half_extent(self) -> Option<Vec2> {
         let fraction = match self {
             Self::Land | Self::Shore => return None,
-            Self::Water => 0.5,
+            Self::Water | Self::Wall => 0.5,
             Self::Tree => 0.24,
             Self::Rock => 0.32,
             Self::Stump => 0.24,
@@ -31,17 +35,21 @@ impl Tile {
 
 #[derive(Resource)]
 pub(crate) struct CollisionMap {
+    size: UVec2,
     // Keep water surfaces separate from props so shore conversion can see the
     // original shoreline even when the adjacent land has a tree or rock.
     surface: Vec<Tile>,
     props: Vec<Tile>,
+    voxel_floors: Option<Vec<Option<i32>>>,
 }
 
 impl CollisionMap {
     pub fn from_tiles(tiles: impl IntoIterator<Item = (u32, u32, &'static str)>) -> Self {
         let mut map = Self {
+            size: SIZE,
             surface: vec![Tile::Land; COUNT],
             props: vec![Tile::Land; COUNT],
+            voxel_floors: None,
         };
         for (x, y, name) in tiles {
             let index = (y * SIZE.x + x) as usize;
@@ -72,32 +80,135 @@ impl CollisionMap {
         map
     }
 
-    pub(super) fn index(p: IVec2) -> Option<usize> {
-        (p.cmpge(IVec2::ZERO).all() && p.cmplt(SIZE.as_ivec2()).all())
-            .then(|| (p.y as u32 * SIZE.x + p.x as u32) as usize)
+    /// Rasterize a voxel surface using the default map dimensions.
+    #[cfg(test)]
+    pub fn from_voxel_surface(sample: impl FnMut(UVec2) -> Option<i32>) -> Self {
+        Self::from_voxel_surface_with_size(SIZE, sample)
     }
 
-    pub(super) fn coords(index: usize) -> UVec2 {
-        UVec2::new(index as u32 % SIZE.x, index as u32 / SIZE.x)
+    /// Sample each cell once in row-major order, starting at (0, 0).
+    /// `Some(y)` is a walkable foot elevation in world units, `None` a solid cell.
+    /// The grid is centered on logical zero, so for odd dimensions `size / 2`
+    /// is the cell at zero. This does not apply any 3D coordinate projection.
+    pub fn from_voxel_surface_with_size(
+        size: UVec2,
+        mut sample: impl FnMut(UVec2) -> Option<i32>,
+    ) -> Self {
+        assert!(size.min_element() > 0 && size.max_element() <= i32::MAX as u32);
+        let count = size.x as usize * size.y as usize;
+        let voxel_floors: Vec<_> = (0..count)
+            .map(|i| sample(Self::coords_for(size.x, i)))
+            .collect();
+        let surface = voxel_floors
+            .iter()
+            .map(|floor| {
+                if floor.is_some() {
+                    Tile::Land
+                } else {
+                    Tile::Wall
+                }
+            })
+            .collect();
+        Self {
+            size,
+            surface,
+            props: vec![Tile::Land; count],
+            voxel_floors: Some(voxel_floors),
+        }
     }
 
-    pub fn center(p: UVec2) -> Vec2 {
-        (p.as_vec2() + 0.5 - SIZE.as_vec2() * 0.5) * TILE_SIZE
+    pub(crate) fn is_voxel(&self) -> bool {
+        self.voxel_floors.is_some()
     }
 
-    /// Tile containing a shared logical ground position; outside the map is None.
-    pub fn tile_at(position: Vec2) -> Option<UVec2> {
+    /// Foot elevation at the center's cell; WFC and missing floors use LAND_TOP.
+    pub(crate) fn floor_y(&self, center: Vec2) -> f32 {
+        self.voxel_floor(center).map_or(LAND_TOP, |y| y as f32)
+    }
+
+    /// Whether the floor heights permit a local step. Check footprint separately.
+    pub(crate) fn step_allowed(&self, from: Vec2, to: Vec2) -> bool {
+        !self.is_voxel()
+            || matches!((self.voxel_floor(from), self.voxel_floor(to)),
+                (Some(a), Some(b)) if a.abs_diff(b) <= 1)
+    }
+
+    fn voxel_floor(&self, position: Vec2) -> Option<i32> {
+        let floors = self.voxel_floors.as_ref()?;
+        let cell = self.cell_at(position)?;
+        floors[Self::offset(self.size.x, cell)]
+    }
+
+    fn offset(width: u32, p: UVec2) -> usize {
+        p.y as usize * width as usize + p.x as usize
+    }
+
+    fn index_for(size: UVec2, p: IVec2) -> Option<usize> {
+        (p.cmpge(IVec2::ZERO).all() && p.cmplt(size.as_ivec2()).all())
+            .then(|| Self::offset(size.x, p.as_uvec2()))
+    }
+
+    fn coords_for(width: u32, index: usize) -> UVec2 {
+        let width = width as usize;
+        UVec2::new((index % width) as u32, (index / width) as u32)
+    }
+
+    fn center_for(size: UVec2, p: UVec2) -> Vec2 {
+        (p.as_vec2() + 0.5 - size.as_vec2() * 0.5) * TILE_SIZE
+    }
+
+    fn tile_at_for(size: UVec2, position: Vec2) -> Option<UVec2> {
         if !position.is_finite() {
             return None;
         }
-        let cell = (position / TILE_SIZE + SIZE.as_vec2() * 0.5)
+        let cell = (position / TILE_SIZE + size.as_vec2() * 0.5)
             .floor()
             .as_ivec2();
-        Self::index(cell).map(|_| cell.as_uvec2())
+        Self::index_for(size, cell).map(|_| cell.as_uvec2())
+    }
+
+    pub(super) fn index(p: IVec2) -> Option<usize> {
+        Self::index_for(SIZE, p)
+    }
+
+    pub(super) fn coords(index: usize) -> UVec2 {
+        Self::coords_for(SIZE.x, index)
+    }
+
+    pub fn center(p: UVec2) -> Vec2 {
+        Self::center_for(SIZE, p)
+    }
+
+    /// Tile containing a logical ground position on the default-size WFC grid.
+    #[cfg(test)]
+    pub fn tile_at(position: Vec2) -> Option<UVec2> {
+        Self::tile_at_for(SIZE, position)
+    }
+
+    /// Center of a cell on this map's grid, in logical pixels.
+    pub(crate) fn cell_center(&self, p: UVec2) -> Vec2 {
+        Self::center_for(self.size, p)
+    }
+
+    /// Cell containing a logical ground position on this map; outside is None.
+    pub(crate) fn cell_at(&self, position: Vec2) -> Option<UVec2> {
+        Self::tile_at_for(self.size, position)
+    }
+
+    pub(super) fn cell_index(&self, p: IVec2) -> Option<usize> {
+        Self::index_for(self.size, p)
+    }
+
+    pub(super) fn cell_coords(&self, index: usize) -> UVec2 {
+        Self::coords_for(self.size.x, index)
+    }
+
+    pub(super) fn cell_count(&self) -> usize {
+        self.surface.len()
     }
 
     pub fn surface(&self, p: UVec2) -> Tile {
-        self.surface[(p.y * SIZE.x + p.x) as usize]
+        self.surface[Self::offset(self.size.x, p)]
     }
 
     fn tile(&self, index: usize) -> Tile {
@@ -109,7 +220,7 @@ impl CollisionMap {
     }
 
     pub fn tiles(&self) -> impl Iterator<Item = (Vec2, Tile)> + '_ {
-        (0..COUNT).map(|i| (Self::center(Self::coords(i)), self.tile(i)))
+        (0..self.cell_count()).map(|i| (self.cell_center(self.cell_coords(i)), self.tile(i)))
     }
 
     pub fn spawn_point(&self) -> Vec2 {
@@ -125,18 +236,18 @@ impl CollisionMap {
 
     pub fn can_stand(&self, center: Vec2) -> bool {
         let radius = Vec2::splat(FOOT_RADIUS);
-        let extent = SIZE.as_vec2() * TILE_SIZE * 0.5;
-        if (center.abs() + radius).cmpgt(extent).any() {
+        let extent = self.size.as_vec2() * TILE_SIZE * 0.5;
+        if !center.is_finite() || (center.abs() + radius).cmpgt(extent).any() {
             return false;
         }
         let lo = ((center - radius + extent) / TILE_SIZE).floor().as_ivec2();
         let hi = ((center + radius + extent) / TILE_SIZE).floor().as_ivec2();
         for y in lo.y..=hi.y {
             for x in lo.x..=hi.x {
-                if let Some(i) = Self::index(IVec2::new(x, y))
+                if let Some(i) = self.cell_index(IVec2::new(x, y))
                     && let Some(half) = self.tile(i).half_extent()
                 {
-                    let nearest = (center - Self::center(Self::coords(i))).abs() - half;
+                    let nearest = (center - self.cell_center(self.cell_coords(i))).abs() - half;
                     if nearest.max(Vec2::ZERO).length_squared() < FOOT_RADIUS * FOOT_RADIUS {
                         return false;
                     }
@@ -157,8 +268,9 @@ impl CollisionMap {
         delta: Vec2,
         others: impl IntoIterator<Item = Vec2> + Clone,
     ) -> Vec2 {
-        let clear = |p: Vec2| {
+        let clear = |from: Vec2, p: Vec2| {
             self.can_stand(p)
+                && self.step_allowed(from, p)
                 && others
                     .clone()
                     .into_iter()
@@ -173,15 +285,15 @@ impl CollisionMap {
         let step = delta / steps.max(1) as f32;
         for _ in 0..steps {
             let previous = position;
-            if clear(position + step) {
+            if clear(position, position + step) {
                 position += step;
             } else {
                 let x = position + Vec2::new(step.x, 0.0);
-                if clear(x) {
+                if clear(position, x) {
                     position = x;
                 }
                 let y = position + Vec2::new(0.0, step.y);
-                if clear(y) {
+                if clear(position, y) {
                     position = y;
                 }
             }
@@ -256,6 +368,58 @@ mod tests {
         assert!(p.x > -30.0 && p.x <= -FOOT_RADIUS * 2.0);
         let slid = map.move_circle_avoiding(p, Vec2::new(5.0, 10.0), [Vec2::ZERO]);
         assert!(slid.y > p.y && slid.length() >= FOOT_RADIUS * 2.0);
+    }
+
+    #[test]
+    fn voxel_surface_uses_full_wall_tiles_and_world_foot_elevation() {
+        let wall = UVec2::new(12, 9);
+        let mut sampled = 0;
+        let map = CollisionMap::from_voxel_surface(|cell| {
+            assert_eq!(cell, CollisionMap::coords(sampled));
+            sampled += 1;
+            (cell != wall).then_some(-4)
+        });
+        assert!(map.is_voxel());
+        assert_eq!(sampled, COUNT);
+        let center = CollisionMap::center(wall);
+        let neighbor = center - Vec2::X * TILE_SIZE;
+        assert_eq!(map.floor_y(neighbor), -4.0);
+        assert_eq!(map.surface(wall), Tile::Wall);
+        assert!(map.tiles().any(|tile| tile == (center, Tile::Wall)));
+        assert!(map.tiles().any(|tile| tile == (neighbor, Tile::Land)));
+        let edge = center - Vec2::X * TILE_SIZE * 0.5;
+        assert!(!map.can_stand(edge - Vec2::X * (FOOT_RADIUS - 1.0)));
+        assert!(map.can_stand(edge - Vec2::X * (FOOT_RADIUS + 1.0)));
+        assert!(!map.step_allowed(neighbor, center));
+        assert_eq!(map.spawn_point(), Vec2::ZERO);
+    }
+
+    #[test]
+    fn voxel_movement_climbs_one_block_and_slides_along_a_two_block_cliff() {
+        let map = CollisionMap::from_voxel_surface_with_size(UVec2::new(5, 5), |p| {
+            Some(match p.x {
+                0 | 1 => 0,
+                2 => 1,
+                _ => 3,
+            })
+        });
+        let low = -Vec2::X * TILE_SIZE;
+        let mid = Vec2::ZERO;
+        let high = Vec2::X * TILE_SIZE;
+        assert!(map.step_allowed(low, mid) && map.step_allowed(mid, low));
+        assert!(!map.step_allowed(mid, high) && !map.step_allowed(high, mid));
+        assert!(map.move_circle(low, mid - low).distance(mid) < 0.001);
+        assert!(map.move_circle(mid, low - mid).distance(low) < 0.001);
+        let slid = map.move_circle(mid, Vec2::splat(TILE_SIZE));
+        assert!(slid.x > 0.0 && slid.x < TILE_SIZE * 0.5);
+        assert!((slid.y - TILE_SIZE).abs() < 0.001);
+        assert_eq!(map.floor_y(slid), 1.0);
+        assert_eq!(map.floor_y(map.move_circle(high, mid - high)), 3.0);
+
+        let wfc = CollisionMap::default();
+        assert!(!wfc.is_voxel());
+        assert_eq!(wfc.floor_y(mid), LAND_TOP);
+        assert!(wfc.step_allowed(mid, high));
     }
 
     #[test]

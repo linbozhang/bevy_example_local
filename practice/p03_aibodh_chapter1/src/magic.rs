@@ -2,7 +2,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    characters::{CharactersPlugin, Orbit, Player, ViewSet, ground_position},
+    characters::{CharactersPlugin, Orbit, Player, ViewSet, map_ground},
     combat::{Projectile, Side},
     game_state::GameState,
     map::generate::{TILE_SIZE, depth_from_feet},
@@ -155,6 +155,7 @@ fn label(power: Power) -> String {
 fn cast(
     mut commands: Commands,
     mode: Res<CharactersPlugin>,
+    map: Res<crate::map::collision::CollisionMap>,
     time: Res<Time>,
     orbit: Option<Res<Orbit>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -189,6 +190,7 @@ fn cast(
     spawn_spell(
         &mut commands,
         *mode,
+        &map,
         magic.power,
         player.position,
         direction,
@@ -200,6 +202,7 @@ fn cast(
 pub(crate) fn spawn_spell(
     commands: &mut Commands,
     mode: CharactersPlugin,
+    map: &crate::map::collision::CollisionMap,
     power: Power,
     position: Vec2,
     direction: Vec2,
@@ -213,7 +216,11 @@ pub(crate) fn spawn_spell(
             offset.y + height,
             depth_from_feet(offset.y) + 0.001,
         ),
-        CharactersPlugin::Billboard3d => ground_position(offset) + Vec3::Y * (height / TILE_SIZE),
+        CharactersPlugin::Billboard3d => {
+            map_ground(position, map)
+                + Vec3::new(direction.x, 0., -direction.y) * (16.0 / TILE_SIZE)
+                + Vec3::Y * (height / TILE_SIZE)
+        }
     };
     let (primary, core) = power.layers();
     let (damage, radius) = match power {

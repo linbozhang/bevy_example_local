@@ -87,12 +87,14 @@ fn fly(
         let delta = shot.velocity * dt;
         let steps = (delta.length() / 3.0).ceil().max(1.) as u32;
         let mut expired = false;
+        let mut previous = shot.position;
         for i in 0..=steps {
             let p = shot.position + delta * (i as f32 / steps as f32);
-            if !map.can_stand(p) {
+            if !map.can_stand(p) || !map.step_allowed(previous, p) {
                 expired = true;
                 break;
             }
+            previous = p;
             let radius_sq = (shot.radius + FOOT_RADIUS).powi(2);
             let hit = match shot.side {
                 Side::Player => enemies

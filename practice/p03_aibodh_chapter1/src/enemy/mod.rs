@@ -187,6 +187,7 @@ fn update(
                         spawn_spell(
                             &mut commands,
                             *mode,
+                            &map,
                             Power::Shadow,
                             old,
                             direction,

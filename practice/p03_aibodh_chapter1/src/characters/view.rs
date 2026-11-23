@@ -2,7 +2,7 @@ use bevy::{light::NotShadowCaster, math::Affine2, prelude::*};
 
 use super::{
     CharactersPlugin, Roster, RosterHandle,
-    camera::{FollowCamera, ground_position},
+    camera::{FollowCamera, map_ground},
     config::Character,
     motion::Player,
 };
@@ -21,6 +21,7 @@ fn frame_uv(entry: &Character, frame: UVec2) -> Affine2 {
 pub(super) fn draw_player(
     mut commands: Commands,
     mode: Res<CharactersPlugin>,
+    map: Res<crate::map::collision::CollisionMap>,
     handle: Res<RosterHandle>,
     rosters: Res<Assets<Roster>>,
     server: Res<AssetServer>,
@@ -80,7 +81,7 @@ pub(super) fn draw_player(
             transform.rotation = camera.rotation;
             transform.scale = Vec3::splat(size);
             // Place the billboard from its feet, independent of the camera pivot.
-            transform.translation = ground_position(player.position)
+            transform.translation = map_ground(player.position, &map)
                 + Vec3::Y * (0.02 + height / TILE_SIZE)
                 + camera.rotation * Vec3::Y * (size / 3.0);
             let uv = frame_uv(entry, frame);

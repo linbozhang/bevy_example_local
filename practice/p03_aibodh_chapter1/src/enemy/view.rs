@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use super::Enemy;
 use crate::{
-    characters::{Action, Character, CharactersPlugin, ground_position},
+    characters::{Action, Character, CharactersPlugin, map_ground},
     map::generate::depth_from_feet,
 };
 
@@ -172,6 +172,7 @@ impl EnemyArt {
 
 #[allow(clippy::type_complexity)]
 pub(super) fn draw(
+    map: Res<crate::map::collision::CollisionMap>,
     mut enemies: Query<(&Enemy, &mut Transform, Option<(&WalkClip, &mut Sprite)>), Without<Leg>>,
     mut legs: Query<(&Leg, &ChildOf, &mut Transform), Without<Enemy>>,
 ) {
@@ -197,7 +198,7 @@ pub(super) fn draw(
                 depth_from_feet(enemy.position.y) + 0.0001,
             );
         } else {
-            t.translation = ground_position(enemy.position);
+            t.translation = map_ground(enemy.position, &map);
             t.rotation = Quat::from_rotation_y((-d.x).atan2(d.y));
         }
     }

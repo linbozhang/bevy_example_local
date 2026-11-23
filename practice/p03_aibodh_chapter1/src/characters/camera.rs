@@ -98,9 +98,22 @@ pub(crate) fn ground_position(position: Vec2) -> Vec3 {
     Vec3::new(position.x / TILE_SIZE, LAND_TOP, -position.y / TILE_SIZE)
 }
 
-pub(super) fn spawn_camera(mut commands: Commands, orbit: Res<Orbit>) {
+pub(crate) fn map_ground(position: Vec2, map: &crate::map::collision::CollisionMap) -> Vec3 {
+    let mut p = ground_position(position);
+    p.y = map.floor_y(position);
+    if map.is_voxel() {
+        p += Vec3::new(0.5, 0., 0.5);
+    }
+    p
+}
+
+pub(super) fn spawn_camera(
+    mut commands: Commands,
+    orbit: Res<Orbit>,
+    voxel: Option<Res<crate::overworld::VoxelMode>>,
+) {
     let rotation = orbit.rotation();
-    commands.spawn((
+    let mut camera = commands.spawn((
         Name::new("Third-person camera"),
         FollowCamera,
         FollowRig3d {
@@ -118,6 +131,17 @@ pub(super) fn spawn_camera(mut commands: Commands, orbit: Res<Orbit>) {
         )
         .with_rotation(rotation),
     ));
+    if voxel.is_some() {
+        use bevy::pbr::{DistanceFog, FogFalloff};
+        camera.insert(DistanceFog {
+            color: Color::srgb(0.57, 0.74, 0.90),
+            falloff: FogFalloff::Linear {
+                start: 78.,
+                end: 105.,
+            },
+            ..default()
+        });
+    }
 }
 
 pub(super) fn read_mouse(
@@ -147,6 +171,8 @@ pub(super) fn read_mouse(
 pub(super) fn follow_player(
     time: Res<Time>,
     orbit: Res<Orbit>,
+    map: Res<crate::map::collision::CollisionMap>,
+    voxel: Option<Res<crate::overworld::Generator>>,
     player: Query<&Player>,
     obstacles: Query<&Transform, With<CameraObstacle>>,
     mut camera: Query<
@@ -158,14 +184,20 @@ pub(super) fn follow_player(
         return;
     };
     // Follow the player's ground track rather than bouncing with the jump animation.
-    let target = ground_position(player.position) + Vec3::Y * EYE_HEIGHT;
-    let pivot = rig.pivot.map_or(target, |previous| {
-        previous.lerp(target, follow_weight(FOLLOW_SPEED, &time))
-    });
+    let target = map_ground(player.position, &map) + Vec3::Y * EYE_HEIGHT;
+    let pivot = rig
+        .pivot
+        .filter(|p| p.distance_squared(target) < 100.)
+        .map_or(target, |previous| {
+            previous.lerp(target, follow_weight(FOLLOW_SPEED, &time))
+        });
     rig.pivot = Some(pivot);
     let rotation = orbit.rotation();
     let back = rotation * Vec3::Z;
-    let clear_arm = obstacles.iter().fold(ARM_LENGTH, |arm, block| {
+    let max_arm = voxel.map_or(ARM_LENGTH, |world| {
+        world.0.camera_arm(pivot, back, ARM_LENGTH)
+    });
+    let clear_arm = obstacles.iter().fold(max_arm, |arm, block| {
         let half_size = block.scale * 0.5 + Vec3::splat(CLEARANCE);
         match box_entry(pivot - block.translation, back, half_size) {
             Some(distance) => arm.min(distance.max(MIN_ARM)),

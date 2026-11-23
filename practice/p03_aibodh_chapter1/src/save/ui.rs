@@ -123,7 +123,8 @@ pub(super) fn menu_input(world: &mut World) {
 }
 
 fn select_slot(world: &mut World, mode: Mode, slot: usize) -> Result<(), String> {
-    let slots = Slots::beside_executable().map_err(|error| error.to_string())?;
+    let slots = Slots::beside_executable(world.contains_resource::<crate::overworld::VoxelMode>())
+        .map_err(|error| error.to_string())?;
     let previous = slots.read(slot);
     match mode {
         Mode::Load => {
@@ -155,6 +156,7 @@ pub(super) fn rebuild(
     mut commands: Commands,
     state: Res<State<GameState>>,
     menu: Res<SaveMenu>,
+    voxel: Option<Res<crate::overworld::VoxelMode>>,
     roots: Query<Entity, With<MenuRoot>>,
     mut last_state: Local<Option<GameState>>,
 ) {
@@ -169,7 +171,7 @@ pub(super) fn rebuild(
         return;
     }
     if let Some(mode) = menu.mode {
-        spawn_slots(&mut commands, &menu, mode);
+        spawn_slots(&mut commands, &menu, mode, voxel.is_some());
     } else if matches!(state.get(), GameState::Paused | GameState::GameOver) {
         commands
             .spawn((
@@ -200,8 +202,8 @@ pub(super) fn rebuild(
     }
 }
 
-fn spawn_slots(commands: &mut Commands, menu: &SaveMenu, mode: Mode) {
-    let slots = Slots::beside_executable();
+fn spawn_slots(commands: &mut Commands, menu: &SaveMenu, mode: Mode, voxel: bool) {
+    let slots = Slots::beside_executable(voxel);
     commands
         .spawn((
             MenuRoot,
