@@ -1,26 +1,29 @@
-# p03_aibodh_chapter1 — Chapters 1–2：Player + World
+# p03_aibodh_chapter1 — Chapters 1–3：Player + World + Characters
 
-基于 [AIBodh 第一章](https://aibodh.com/posts/bevy-rust-game-development-chapter-1/) 的角色，继续实现 [第二章 Let There Be a World](https://aibodh.com/posts/bevy-rust-game-development-chapter-2/)。使用工作区 Bevy 0.20.1 和 `bevy_procedural_tilemaps = 0.5.0`：2D 相机、像素人物、方向键移动、四方向动画，以及五层 WFC 程序化地图。在此基础上增加了 3D 像素方块视图，默认启动 3D，也可切回原版 2D；不包含战斗。
+在 [第一章的角色](https://aibodh.com/posts/bevy-rust-game-development-chapter-1/) 和 [第二章的五层 WFC 地图](https://aibodh.com/posts/bevy-rust-game-development-chapter-2/) 上，实现 [第三章 Let The Data Flow](https://aibodh.com/posts/bevy-rust-game-development-chapter-3/) 的数据驱动角色系统。使用 Bevy 0.20.1 和 `bevy_procedural_tilemaps = 0.5.0`；默认启动 3D，`--2d` 切到 2D。
 
 ## 运行
 
 在 workspace 根目录：
 
 ```sh
-cargo run -p p03_aibodh_chapter1        # 3D 像素方块地图
-cargo run -p p03_aibodh_chapter1 -- --2d # 原版 2D 地图和玩家
+cargo run -p p03_aibodh_chapter1        # 3D 方块地图 + 像素角色
+cargo run -p p03_aibodh_chapter1 -- --2d # 2D 地图 + 像素角色
 cargo test -p p03_aibodh_chapter1
 ```
 
 也可以进入本目录后运行 `cargo run`。资源目录由 `CARGO_MANIFEST_DIR` 定位，启动时不必复制资源。该路径适合源码练习；若单独分发可执行文件，需要改为可部署的资源路径。
 
-- 3D 模式使用固定斜俯视相机，仅展示地形，不生成玩家。
-- 2D 模式用方向键移动；松键停止并保留当前动画姿势。
-- 速度：140 像素/秒；斜向移动归一化，不会更快。
-- 动画：每方向 9 帧，0.1 秒/帧。
-- 关闭窗口：退出。
-- 地图：25×18 格，共五层，启动时生成一次。2D 每格 32 像素；3D 每格 1 个世界单位。
-- 相机不跟随、没有边界和碰撞；人物可走过水面、树木和地图边界，与第二章范围一致。
+两个模式使用相同的操作：方向键移动，按住任一 `Shift` 奔跑，按 `Space` 跳跃，按 `1`–`6` 原地切换角色。默认角色为 Adventurer。斜向移动归一化；静止时保持最后朝向，显示 Walk 的首帧。
+
+地图为 25×18 格、五层，启动时生成一次。2D 每格 32 像素；3D 每格 1 个世界单位。相机固定，不实现碰撞、地形高度跟随或战斗；3D 角色以陆地表面为基准，经过低于岸边的水面时不会下沉。
+
+## 第三章：数据驱动角色
+
+1. `src/assets/characters/characters.ron` 定义六个角色的速度、奔跑倍率、最大生命值和图集动画。生命值目前只记录在配置和切换日志里。修改配置后重启即可看到效果。
+2. `characters/config.rs` 使用 Bevy `AssetLoader` 异步读取 RON，并校验动画行、帧数和时长；不需要额外的第三方 loader。当前角色图集为 9 列 × 12 行，帧大小为 64×64 像素。Walk/Run/Jump 每组四行，顺序为上、左、下、右；配置也支持单行的非方向动画。
+3. `characters/motion.rs` 负责输入、移动和动画计时；切换 Walk/Run 或转向时重开循环。Jump 只播放一遍，转向不重置进度；结束时回到当前输入决定的 Walk/Run。切换角色保留平面位置与朝向，清除旧动画和跳跃状态。
+4. `characters/view.rs` 在移动更新后读取同一帧：2D 通过 `Sprite` 图集索引显示；3D 使用面向固定相机的透明像素面片，通过材质 UV 选帧，仍受地形深度遮挡。3D 把 2D 的向上移动映射为 `-Z`，并将像素距离除以 32；跳跃抬升 2D 的 `Y` 或 3D 的高度 `Y`。
 
 ## 3D 版如何复用 2D 的地图
 
@@ -35,8 +38,8 @@ cargo test -p p03_aibodh_chapter1
 
 ```text
 src/main.rs                       App / 插件 / 资源路径 / 相机
-src/player.rs                     PlayerPlugin / 组件 / 移动 / 动画 / 测试
-src/assets/player_spritesheet.png 原创像素人物图集
+src/characters/                   角色配置加载 / 共用控制器 / 2D、3D 渲染
+src/assets/characters/            characters.ron 与 6 张原创角色图集
 src/map/                          资源 / 模型 / sockets / 规则 / 生成与测试
 src/map/view_3d.rs                方块组合 / 世界坐标 / 3D 相机与灯光
 src/map/block_art.rs              原创像素纹理 / 顶侧底 UV / 材质
@@ -52,21 +55,13 @@ LICENSE-MIT                       教程代码原始 MIT 声明
 python3 practice/p03_aibodh_chapter1/tools/generate_sprite.py
 ```
 
-## 与文章相比的必要修正
-
-1. **图集步长与动画帧数分开。** 教程仓库原图是 832×3456，即 13 列、54 行的 64×64 图块；但文章按 9 列定义图集，会截错帧。本工程生成同样尺寸的图，使用 13 列图集，行走仅循环每行前 9 帧。Up/Left/Down/Right 使用行 8/9/10/11。
-2. **移动先于动画。** `(move_player, animate_player).chain()` 确定执行顺序，不能靠共享可写组件自动推断先后。
-3. **像素图使用 nearest 采样。** 避免线性采样把人物边缘变模糊。
-4. **低帧率动画补帧。** 使用 `times_finished_this_tick()`，一个更新跨过多个间隔时不会只推进一帧。
-5. `Camera2d` 是组件，不是旧式 camera bundle；`texture_atlas == None` 表示未配置图集，不代表图片仍在后台加载。
-
 ## 资源和代码来源
 
 代码参考 [ImpatientProgrammerBevyRust / chapter1](https://github.com/jamesfebin/ImpatientProgrammerBevyRust/tree/37b5849327984c4378498d875e3c428bacb25c0c/chapter1)，作者 Febin John James，保留其 MIT 声明于 `LICENSE-MIT`。
 
 **本工程没有复制教程的 LPC 人物图片。** 上游仓库明确授权教程代码为 MIT，但没有提供原图的完整 LPC 图层作者、credits 或生成配置。为避免将代码许可误当作美术许可，这里用生成脚本绘制原创像素人物，保留相同的教学布局。角色外观因此与文章不同。
 
-`tools/generate_sprite.py` 及生成的 `player_spritesheet.png` 按 MIT 许可提供，使用本目录 `LICENSE-MIT` 的条款；不需要外部美术资源、Python 图片库或网络下载。
+`tools/generate_sprite.py` 及生成的六张角色图集按 MIT 许可提供，使用本目录 `LICENSE-MIT` 的条款；不需要外部美术资源、Python 图片库或网络下载。
 
 ## 第二章：地图生成的阅读顺序
 
@@ -95,4 +90,4 @@ python3 practice/p03_aibodh_chapter1/tools/generate_sprite.py
 
 ## 测试范围
 
-角色测试在无窗口 Bevy App 中运行真实移动/动画系统。地图测试核对图集尺寸和 sprite 矩形、模型/资源索引对应，并实际生成多个种子，验证可复现、层次正确、装饰物基座不落在水上、大树左右配对、边界空白和树冠格不被其他装饰占用。3D 测试核对类型分类、草方块贴图、地图居中、方块网格复用及水面低于岸边。画面和真实键盘输入仍需实际启动验证。
+角色测试在无窗口 Bevy App 中加载真实 RON，验证两种模式的移动、换角、选帧及一次性跳跃，并核对角色 PNG 的图集尺寸。地图测试验证可复现性、地形层次、装饰基座、树木配对、方块贴图及水面高度。实际 GPU 渲染和键盘手感仍需启动验证。

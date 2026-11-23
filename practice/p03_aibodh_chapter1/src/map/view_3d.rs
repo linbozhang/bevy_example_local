@@ -6,7 +6,7 @@ use super::{
 };
 
 // 一格对应一个 3D 世界单位，不沿用 2D 版的 32 像素尺寸。
-const LAND_TOP: f32 = 1.0;
+pub(crate) const LAND_TOP: f32 = 1.0;
 const LAKE_BED: f32 = 0.55;
 const WATER_TOP: f32 = 0.8;
 const CELL_COUNT: usize = (GRID_X * GRID_Y) as usize;

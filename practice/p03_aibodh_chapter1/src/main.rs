@@ -1,17 +1,14 @@
 use bevy::prelude::*;
 
+mod characters;
 mod map;
-mod player;
 
 fn main() {
     let sprites_2d = std::env::args().skip(1).any(|arg| arg == "--2d");
     let (title, background) = if sprites_2d {
-        ("AIBodh Chapters 1–2", Color::BLACK)
+        ("AIBodh Chapter 3 — 2D", Color::BLACK)
     } else {
-        (
-            "AIBodh Chapter 2 — 3D WFC terrain",
-            Color::srgb(0.11, 0.15, 0.21),
-        )
+        ("AIBodh Chapter 3 — 3D", Color::srgb(0.11, 0.15, 0.21))
     };
 
     let mut app = App::new();
@@ -33,10 +30,15 @@ fn main() {
             }),
     );
     if sprites_2d {
-        app.add_systems(Startup, setup_camera)
-            .add_plugins((map::MapPlugin::Sprites2d, player::PlayerPlugin));
+        app.add_systems(Startup, setup_camera).add_plugins((
+            map::MapPlugin::Sprites2d,
+            characters::CharactersPlugin::Sprites2d,
+        ));
     } else {
-        app.add_plugins(map::MapPlugin::Blocks3d);
+        app.add_plugins((
+            map::MapPlugin::Blocks3d,
+            characters::CharactersPlugin::Billboard3d,
+        ));
     }
     app.run();
 }

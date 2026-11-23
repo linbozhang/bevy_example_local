@@ -10,6 +10,8 @@ mod view_3d;
 
 use bevy::prelude::*;
 
+pub(crate) use view_3d::LAND_TOP;
+
 pub enum MapPlugin {
     Sprites2d,
     Blocks3d,
