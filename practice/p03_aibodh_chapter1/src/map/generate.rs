@@ -1,44 +1,69 @@
-use crate::inventory::Pickable;
+//! Chapter 9 overlap stitching: each chunk pins all five layers of its west
+//! and south edges to its already collapsed neighbors. Renderers and collision
+//! consume the same deduplicated world grid, never the individual chunk grids.
+use std::sync::Arc;
+
 use bevy::prelude::*;
 use bevy_procedural_tilemaps::{
-    prelude::*, proc_gen::generator::model::ModelInstance, spawner::spawn_node,
+    prelude::*,
+    proc_gen::generator::{model::ModelInstance, rules::Rules},
 };
 
-use super::{
-    assets::{SpawnableAsset, load_assets, prepare_tilemap_handles},
-    collision::CollisionMap,
-    rules::build_world,
-};
+use super::{assets::SpawnableAsset, collision::CollisionMap, rules::build_world};
 
-pub const GRID_X: u32 = 25;
-pub const GRID_Y: u32 = 18;
-pub const GRID_Z: u32 = 5;
-pub const TILE_SIZE: f32 = 32.0;
+const GRID_X: u32 = 25;
+const GRID_Y: u32 = 18;
+pub(super) const GRID_Z: u32 = 5;
+const CHUNKS: UVec2 = UVec2::new(10, 10);
+const STRIDE: UVec2 = UVec2::new(GRID_X - 1, GRID_Y - 1);
+pub(super) const SIZE: UVec2 = UVec2::new(CHUNKS.x * STRIDE.x + 1, CHUNKS.y * STRIDE.y + 1);
+pub(super) const COUNT: usize = (SIZE.x * SIZE.y) as usize;
+pub const TILE_SIZE: f32 = 64.0;
 pub(crate) const TILEMAP_IMAGE: &str = "tile_layers/tilemap.png";
-// 固定种子便于教学复现；换成其他数字即可得到另一张地图。
 pub const MAP_SEED: u64 = 42;
+const CHUNK_RETRIES: u32 = 8;
+const MAX_BACKTRACKS: u32 = 128;
+
 // Ground layers occupy Z < 4; props and players share the next layer.
 pub(crate) fn depth_from_feet(y: f32) -> f32 {
-    5.0 - (y / (TILE_SIZE * GRID_Y as f32) + 0.5).clamp(0.0, 1.0)
+    5.0 - (y / (TILE_SIZE * SIZE.y as f32) + 0.5).clamp(0.0, 1.0)
 }
 
-pub(super) fn collision_from_models<'a>(
-    generator: &TerrainGenerator,
-    definitions: &[Vec<SpawnableAsset>],
-    data: impl Iterator<Item = &'a ModelInstance>,
-) -> CollisionMap {
-    CollisionMap::from_tiles(data.enumerate().filter_map(|(i, instance)| {
-        let asset = definitions[instance.model_index].first()?;
-        let pos = generator.grid().pos_from_index(i);
-        Some((pos.x, pos.y, asset.sprite_name()))
-    }))
+type TerrainGrid = CartesianGrid<Cartesian3D>;
+type TerrainRules = Arc<Rules<Cartesian3D>>;
+type Pin = (usize, usize);
+type Definitions = Vec<Vec<SpawnableAsset>>;
+
+#[derive(Resource)]
+pub(super) struct TerrainBuild {
+    pub seed: u64,
+    pub collision: CollisionMap,
+    pub definitions: Definitions,
+    cells: Vec<ModelInstance>,
 }
 
-pub type TerrainGenerator = Generator<Cartesian3D, CartesianGrid<Cartesian3D>>;
+impl TerrainBuild {
+    pub fn cells(&self) -> impl Iterator<Item = (UVec2, u32, &ModelInstance)> + '_ {
+        cells(&self.cells, SIZE)
+    }
+}
 
-pub fn create_generator(seed: u64) -> (TerrainGenerator, Vec<Vec<SpawnableAsset>>) {
+fn cells(
+    data: &[ModelInstance],
+    size: UVec2,
+) -> impl Iterator<Item = (UVec2, u32, &ModelInstance)> {
+    data.iter().enumerate().map(move |(i, instance)| {
+        let i = i as u32;
+        (
+            UVec2::new(i % size.x, i / size.x % size.y),
+            i / (size.x * size.y),
+            instance,
+        )
+    })
+}
+
+fn terrain_rules() -> (TerrainRules, usize, Definitions) {
     let (definitions, models, sockets) = build_world();
-    // 装饰层的第一个模型是空白；用外围空白约束防止边界生成半棵树。
     let props_void = definitions
         .iter()
         .rposition(Vec::is_empty)
@@ -47,101 +72,220 @@ pub fn create_generator(seed: u64) -> (TerrainGenerator, Vec<Vec<SpawnableAsset>
         .with_rotation_axis(Direction::ZForward)
         .build()
         .expect("terrain socket rules must be valid");
-    let grid = CartesianGrid::new_cartesian_3d(GRID_X, GRID_Y, GRID_Z, false, false, false);
-    let mut borders = Vec::new();
-    let void_variant = rules
+    let props_void = rules
         .variant_index(props_void, ModelRotation::Rot0)
         .unwrap();
+    (Arc::new(rules), props_void, definitions)
+}
+
+fn chunk_grid() -> TerrainGrid {
+    CartesianGrid::new_cartesian_3d(GRID_X, GRID_Y, GRID_Z, false, false, false)
+}
+
+fn chunk_pins(
+    index: usize,
+    chunks: UVec2,
+    grid: &TerrainGrid,
+    rules: &TerrainRules,
+    props_void: usize,
+    done: &[Vec<ModelInstance>],
+) -> Vec<Pin> {
+    let cx = index as u32 % chunks.x;
+    let cy = index as u32 / chunks.x;
+    let left = (cx > 0).then(|| &done[index - 1]);
+    let bottom = (cy > 0).then(|| &done[index - chunks.x as usize]);
+    let mut pins = Vec::new();
     for y in 0..GRID_Y {
         for x in 0..GRID_X {
-            if x == 0 || y == 0 || x == GRID_X - 1 || y == GRID_Y - 1 {
-                borders.push((grid.index_from_coords(x, y, GRID_Z - 1), void_variant));
+            let exterior = (cx == 0 && x == 0)
+                || (cy == 0 && y == 0)
+                || (cx == chunks.x - 1 && x == GRID_X - 1)
+                || (cy == chunks.y - 1 && y == GRID_Y - 1);
+            // At the southwest corner, both neighbors already agree via
+            // the southwest chunk. Pin that cell only once.
+            let neighbor = if x == 0
+                && let Some(left) = left
+            {
+                Some((left, GRID_X - 1, y))
+            } else if y == 0
+                && let Some(bottom) = bottom
+            {
+                Some((bottom, x, GRID_Y - 1))
+            } else {
+                None
+            };
+            if let Some((neighbor, nx, ny)) = neighbor {
+                for z in 0..GRID_Z {
+                    let model = neighbor[grid.index_from_coords(nx, ny, z)];
+                    pins.push((
+                        grid.index_from_coords(x, y, z),
+                        rules
+                            .variant_index(model.model_index, model.rotation)
+                            .unwrap(),
+                    ));
+                }
+            } else if exterior {
+                // Only the outside of the entire map must be prop-free. Internal
+                // edges may contain trees, including bases/canopies spanning a seam.
+                pins.push((grid.index_from_coords(x, y, GRID_Z - 1), props_void));
             }
         }
     }
-    let generator = GeneratorBuilder::new()
-        .with_rules(rules)
-        .with_grid(grid)
-        .with_initial_nodes_raw(borders)
+    pins
+}
+
+fn solve_chunk(
+    grid: &TerrainGrid,
+    rules: &TerrainRules,
+    pins: &[Pin],
+    seed: u64,
+) -> Result<Vec<ModelInstance>, String> {
+    let mut generator = GeneratorBuilder::new()
+        .with_shared_rules(rules.clone())
+        .with_grid(grid.clone())
+        .with_initial_nodes_raw(pins.to_vec())
         .with_rng(RngMode::Seeded(seed))
-        .with_max_retry_count(50)
+        .with_max_retry_count(CHUNK_RETRIES)
         .with_node_heuristic(NodeSelectionHeuristic::MinimumRemainingValue)
         .with_model_heuristic(ModelSelectionHeuristic::WeightedProbability)
         .build()
-        .expect("terrain generator configuration must be valid");
-    (generator, definitions)
+        .map_err(|error| error.to_string())?;
+    let (_, data) = generator
+        .generate_grid()
+        .map_err(|error| error.to_string())?;
+    Ok(data.iter().copied().collect())
 }
 
-pub fn setup_map(
-    mut commands: Commands,
-    server: Res<AssetServer>,
-    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
-) {
-    let (mut generator, definitions) = create_generator(MAP_SEED);
-    // 小地图在 Startup 同步生成：达到重试上限明确失败，不逐帧无限重试。
-    let (info, data) = generator
-        .generate_grid()
-        .expect("WFC exhausted its retry budget");
-    info!(
-        "Generated {} terrain cells with seed {MAP_SEED}: {info:?}",
-        data.iter().count()
-    );
-    commands.insert_resource(collision_from_models(&generator, &definitions, data.iter()));
-    let handles = prepare_tilemap_handles(&server, &mut layouts, TILEMAP_IMAGE);
-    let spawner = NodesSpawner::new(
-        load_assets(&handles, &definitions),
-        Vec3::new(TILE_SIZE, TILE_SIZE, 1.0),
-        Vec3::ONE,
-    );
-    let parent = commands
-        .spawn((
-            Name::new("Generated terrain"),
-            Transform::from_xyz(
-                -TILE_SIZE * GRID_X as f32 / 2.0,
-                -TILE_SIZE * GRID_Y as f32 / 2.0,
-                0.0,
-            ),
-            Visibility::default(),
-        ))
-        .id();
-    for (index, instance) in data.iter().enumerate() {
-        let pos = generator.grid().pos_from_index(index);
-        let props = pos.z == GRID_Z - 1;
-        let mut prop_parent = parent;
-        if props && spawner.assets.get(&instance.model_index).is_some() {
-            // Both halves of a tree use the BASE row, not the canopy sprite's Y.
-            let center = CollisionMap::center(UVec2::new(pos.x, pos.y));
-            prop_parent = commands
-                .spawn((
-                    Transform::from_xyz(0.0, 0.0, depth_from_feet(center.y) - 4.5),
-                    Visibility::default(),
-                    ChildOf(parent),
-                ))
-                .id();
-            if let Some(kind) = definitions[instance.model_index]
-                .first()
-                .and_then(|asset| asset.pickup)
-            {
-                commands
-                    .entity(prop_parent)
-                    .insert(Pickable::new(kind, center));
+// SplitMix64: a fixed, wrapping mixer keeps per-attempt seeds independent of
+// task scheduling and RNG-library changes outside the WFC solver itself.
+fn attempt_seed(seed: u64, attempt: u64) -> u64 {
+    let mut z = seed.wrapping_add(attempt.wrapping_add(1).wrapping_mul(0x9e3779b97f4a7c15));
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+    z ^ (z >> 31)
+}
+
+fn stitch(
+    seed: u64,
+    chunks: UVec2,
+    rules: &TerrainRules,
+    props_void: usize,
+) -> Result<Vec<ModelInstance>, String> {
+    let grid = chunk_grid();
+    let count = (chunks.x * chunks.y) as usize;
+    let mut done = Vec::with_capacity(count);
+    let mut backtracks = 0;
+    let mut attempt = 0;
+    while done.len() < count {
+        let i = done.len();
+        let x = i % chunks.x as usize;
+        let y = i / chunks.x as usize;
+        let pins = chunk_pins(i, chunks, &grid, rules, props_void, &done);
+        let result = solve_chunk(&grid, rules, &pins, attempt_seed(seed, attempt));
+        attempt += 1;
+        match result {
+            Ok(chunk) => done.push(chunk),
+            Err(error) if backtracks >= MAX_BACKTRACKS => {
+                return Err(format!(
+                    "Terrain seed {seed}: chunk ({x}, {y}) failed after {backtracks} backtracks: {error}"
+                ));
+            }
+            Err(_) => {
+                // Reopen the root of the conflicting corner (or the one pinned
+                // neighbor along the first row/column) rather than relaxing a seam.
+                let rollback = usize::from(x > 0) + usize::from(y > 0) * chunks.x as usize;
+                done.truncate(i - rollback);
+                backtracks += 1;
             }
         }
-        spawn_node(
-            &mut commands,
-            prop_parent,
-            generator.grid(),
-            &spawner,
-            instance,
-            index,
-        );
     }
+
+    let size = chunks * STRIDE + UVec2::ONE;
+    let mut stitched = vec![None; (size.x * size.y * GRID_Z) as usize];
+    for (i, chunk) in done.iter().enumerate() {
+        let offset = UVec2::new(i as u32 % chunks.x, i as u32 / chunks.x) * STRIDE;
+        for (local, z, &model) in cells(chunk, UVec2::new(GRID_X, GRID_Y)) {
+            let pos = local + offset;
+            let slot = &mut stitched[((z * size.y + pos.y) * size.x + pos.x) as usize];
+            if slot
+                .replace(model)
+                .is_some_and(|existing| existing != model)
+            {
+                return Err(format!(
+                    "Terrain seed {seed}: mismatching seam at {pos:?}, layer {z}"
+                ));
+            }
+        }
+    }
+    Ok(stitched
+        .into_iter()
+        .map(|cell| cell.expect("covered by a chunk"))
+        .collect())
+}
+
+pub(super) fn build_terrain(seed: u64) -> Result<TerrainBuild, String> {
+    let (rules, props_void, definitions) = terrain_rules();
+    let data = stitch(seed, CHUNKS, &rules, props_void)?;
+    let collision = CollisionMap::from_tiles(cells(&data, SIZE).filter_map(|(pos, _, model)| {
+        let asset = definitions[model.model_index].first()?;
+        Some((pos.x, pos.y, asset.sprite_name()))
+    }));
+    Ok(TerrainBuild {
+        seed,
+        collision,
+        definitions,
+        cells: data,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::tilemap::TILEMAP;
     use super::*;
+
+    #[test]
+    fn stitched_chunks_are_repeatable_and_keep_props_aligned_across_seams() {
+        let generate = |seed| {
+            let (rules, props_void, definitions) = terrain_rules();
+            let chunks = UVec2::splat(2);
+            (
+                stitch(seed, chunks, &rules, props_void).unwrap(),
+                definitions,
+                chunks * STRIDE + UVec2::ONE,
+            )
+        };
+        let (data, definitions, size) = generate(MAP_SEED);
+        assert_eq!(data.len(), (size.x * size.y * GRID_Z) as usize);
+        assert_eq!(data, generate(MAP_SEED).0);
+        assert_ne!(data, generate(7).0);
+
+        let props = |pos: UVec2| {
+            &definitions
+                [data[(((GRID_Z - 1) * size.y + pos.y) * size.x + pos.x) as usize].model_index]
+        };
+        for (pos, z, _) in cells(&data, size) {
+            if z != GRID_Z - 1 {
+                continue;
+            }
+            let Some(base) = props(pos).first() else {
+                continue;
+            };
+            assert!(pos.cmpgt(UVec2::ZERO).all() && pos.cmplt(size - UVec2::ONE).all());
+            let name = base.sprite_name();
+            if name.starts_with("small_tree") || name.starts_with("big_tree") {
+                assert!(
+                    props(pos + UVec2::Y).is_empty(),
+                    "blocked canopy at {pos:?}"
+                );
+            }
+            if let Some(stem) = name.strip_suffix("_bl") {
+                assert_eq!(props(pos + UVec2::X)[0].sprite_name(), format!("{stem}_br"));
+            }
+            if let Some(stem) = name.strip_suffix("_br") {
+                assert_eq!(props(pos - UVec2::X)[0].sprite_name(), format!("{stem}_bl"));
+            }
+        }
+    }
 
     #[test]
     fn atlas_metadata_matches_image_and_all_models_have_known_assets() {
@@ -173,19 +317,15 @@ mod tests {
         let mut water_count = 0;
         let mut prop_count = 0;
         for seed in [42, 7, 123] {
-            let (mut generator, _) = create_generator(seed);
-            let (_, data) = generator
-                .generate_grid()
-                .expect("seed must produce a map within budget");
+            let (rules, props_void, _) = terrain_rules();
+            let grid = chunk_grid();
+            let pins = chunk_pins(0, UVec2::ONE, &grid, &rules, props_void, &[]);
+            let data = solve_chunk(&grid, &rules, &pins, seed).unwrap();
             assert_eq!(data.iter().count(), (GRID_X * GRID_Y * GRID_Z) as usize);
-            let (mut repeat, _) = create_generator(seed);
-            assert_eq!(
-                data.iter().collect::<Vec<_>>(),
-                repeat.generate_grid().unwrap().1.iter().collect::<Vec<_>>()
-            );
+            assert_eq!(data, solve_chunk(&grid, &rules, &pins, seed).unwrap());
             let cells: Vec<_> = data.iter().collect();
             for (index, instance) in data.iter().enumerate() {
-                let pos = generator.grid().pos_from_index(index);
+                let pos = grid.pos_from_index(index);
                 let assets = &definitions[instance.model_index];
                 for asset in assets {
                     let name = asset.sprite_name();

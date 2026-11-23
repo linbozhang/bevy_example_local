@@ -3,6 +3,7 @@ use bevy::prelude::*;
 
 use crate::{
     characters::{CharactersPlugin, Orbit, Player, ViewSet, ground_position},
+    combat::{Projectile, Side},
     game_state::GameState,
     map::generate::{TILE_SIZE, depth_from_feet},
     particles::{Emitter, Layer, ParticleSet},
@@ -113,19 +114,23 @@ pub(crate) struct MagicPlugin;
 
 impl Plugin for MagicPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnExit(GameState::Loading), spawn_label)
-            .add_systems(
-                Update,
-                cast.after(ViewSet)
-                    .before(ParticleSet)
-                    .run_if(in_state(GameState::Playing)),
-            );
+        app.add_systems(
+            OnExit(GameState::Loading),
+            spawn_label.in_set(crate::game_state::SpawnSet),
+        )
+        .add_systems(
+            Update,
+            cast.after(ViewSet)
+                .before(ParticleSet)
+                .run_if(in_state(GameState::Playing)),
+        );
     }
 }
 
 fn spawn_label(mut commands: Commands) {
     commands.spawn((
         SpellLabel,
+        crate::game_state::SessionEntity,
         Text::new(label(Power::Fire)),
         TextFont {
             font_size: FontSize::Px(20.),
@@ -155,6 +160,7 @@ fn cast(
     keys: Res<ButtonInput<KeyCode>>,
     mut player: Single<(&Player, &mut PlayerMagic)>,
     mut hud: Single<&mut Text, With<SpellLabel>>,
+    mut cue: MessageWriter<crate::sound::SoundCue>,
 ) {
     use KeyCode::{ControlLeft, ControlRight, F5, F6, F7, F8};
     let (player, magic) = &mut *player;
@@ -175,6 +181,7 @@ fn cast(
         return;
     }
     magic.cooldown = 0.5;
+    cue.write(crate::sound::SoundCue::PlayerCast);
     let facing = player.facing_direction();
     let direction = orbit
         .as_ref()
@@ -186,6 +193,7 @@ fn cast(
         player.position,
         direction,
         24.0 + player.lift * 20.0,
+        Side::Player,
     );
 }
 
@@ -196,6 +204,7 @@ pub(crate) fn spawn_spell(
     position: Vec2,
     direction: Vec2,
     height: f32,
+    side: Side,
 ) {
     let offset = position + direction * 16.0;
     let origin = match mode {
@@ -207,12 +216,32 @@ pub(crate) fn spawn_spell(
         CharactersPlugin::Billboard3d => ground_position(offset) + Vec3::Y * (height / TILE_SIZE),
     };
     let (primary, core) = power.layers();
+    let (damage, radius) = match power {
+        Power::Fire => (32., 9.),
+        Power::Arcane => (40., 6.),
+        Power::Shadow => (24., 7.),
+        Power::Poison => (20., 14.),
+    };
+    commands.spawn((
+        crate::game_state::SessionEntity,
+        Projectile {
+            position,
+            velocity: direction * primary.speed,
+            remaining: primary.lifetime,
+            radius,
+            damage,
+            side,
+        },
+    ));
     for layer in std::iter::once(primary).chain(core) {
-        commands.spawn(Emitter {
-            origin,
-            direction,
-            layer,
-            interval: None,
-        });
+        commands.spawn((
+            crate::game_state::SessionEntity,
+            Emitter {
+                origin,
+                direction,
+                layer,
+                interval: None,
+            },
+        ));
     }
 }

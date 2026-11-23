@@ -1,11 +1,9 @@
 //! Shared ground-plane collision in 2D pixels, regardless of renderer.
 use bevy::prelude::*;
 
-use super::generate::{GRID_X, GRID_Y, TILE_SIZE};
+use super::generate::{COUNT, SIZE, TILE_SIZE};
 
 pub(crate) const FOOT_RADIUS: f32 = 7.0;
-const SIZE: UVec2 = UVec2::new(GRID_X, GRID_Y);
-pub(super) const COUNT: usize = (GRID_X * GRID_Y) as usize;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Tile {
@@ -35,18 +33,18 @@ impl Tile {
 pub(crate) struct CollisionMap {
     // Keep water surfaces separate from props so shore conversion can see the
     // original shoreline even when the adjacent land has a tree or rock.
-    surface: [Tile; COUNT],
-    props: [Tile; COUNT],
+    surface: Vec<Tile>,
+    props: Vec<Tile>,
 }
 
 impl CollisionMap {
     pub fn from_tiles(tiles: impl IntoIterator<Item = (u32, u32, &'static str)>) -> Self {
         let mut map = Self {
-            surface: [Tile::Land; COUNT],
-            props: [Tile::Land; COUNT],
+            surface: vec![Tile::Land; COUNT],
+            props: vec![Tile::Land; COUNT],
         };
         for (x, y, name) in tiles {
-            let index = (y * GRID_X + x) as usize;
+            let index = (y * SIZE.x + x) as usize;
             if name.starts_with("water") {
                 map.surface[index] = Tile::Water;
             } else if name.starts_with("small_tree") || name.starts_with("big_tree") {
@@ -57,7 +55,7 @@ impl CollisionMap {
                 map.props[index] = Tile::Stump;
             }
         }
-        let original = map.surface;
+        let original = map.surface.clone();
         for (index, tile) in map.surface.iter_mut().enumerate() {
             if *tile != Tile::Water {
                 continue;
@@ -76,19 +74,30 @@ impl CollisionMap {
 
     pub(super) fn index(p: IVec2) -> Option<usize> {
         (p.cmpge(IVec2::ZERO).all() && p.cmplt(SIZE.as_ivec2()).all())
-            .then(|| (p.y as u32 * GRID_X + p.x as u32) as usize)
+            .then(|| (p.y as u32 * SIZE.x + p.x as u32) as usize)
     }
 
     pub(super) fn coords(index: usize) -> UVec2 {
-        UVec2::new(index as u32 % GRID_X, index as u32 / GRID_X)
+        UVec2::new(index as u32 % SIZE.x, index as u32 / SIZE.x)
     }
 
     pub fn center(p: UVec2) -> Vec2 {
         (p.as_vec2() + 0.5 - SIZE.as_vec2() * 0.5) * TILE_SIZE
     }
 
+    /// Tile containing a shared logical ground position; outside the map is None.
+    pub fn tile_at(position: Vec2) -> Option<UVec2> {
+        if !position.is_finite() {
+            return None;
+        }
+        let cell = (position / TILE_SIZE + SIZE.as_vec2() * 0.5)
+            .floor()
+            .as_ivec2();
+        Self::index(cell).map(|_| cell.as_uvec2())
+    }
+
     pub fn surface(&self, p: UVec2) -> Tile {
-        self.surface[(p.y * GRID_X + p.x) as usize]
+        self.surface[(p.y * SIZE.x + p.x) as usize]
     }
 
     fn tile(&self, index: usize) -> Tile {
@@ -193,7 +202,7 @@ impl Default for CollisionMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::generate::{MAP_SEED, collision_from_models, create_generator};
+    use crate::map::generate::{MAP_SEED, build_terrain};
 
     #[test]
     fn shoreline_and_tree_canopy_are_passable_but_deep_water_and_bases_are_not() {
@@ -215,7 +224,9 @@ mod tests {
             );
         }
         assert!(map.can_stand(map.spawn_point()));
-        let centered_lake = (11..=13).flat_map(|x| (7..=10).map(move |y| (x, y, "water")));
+        let mid = SIZE / 2;
+        let centered_lake = (mid.x - 1..=mid.x + 1)
+            .flat_map(|x| (mid.y - 1..=mid.y + 1).map(move |y| (x, y, "water")));
         let map = CollisionMap::from_tiles(centered_lake);
         assert!(!map.can_stand(Vec2::ZERO));
         assert!(map.can_stand(map.spawn_point()));
@@ -225,13 +236,16 @@ mod tests {
     fn long_movement_cannot_tunnel_and_diagonal_movement_slides() {
         let map = CollisionMap::from_tiles([(12, 9, "rock_1")]);
         let rock = CollisionMap::center(UVec2::new(12, 9));
-        let start = rock - Vec2::X * 32.0;
+        let start = rock - Vec2::X * TILE_SIZE;
         let stopped = map.move_circle(start, Vec2::X * 100.0);
         assert!(stopped.x > start.x && stopped.x < rock.x);
         assert!(map.can_stand(stopped));
         let slid = map.move_circle(stopped, Vec2::new(6.0, 12.0));
         assert!(slid.y > stopped.y && map.can_stand(slid));
-        let edge = map.move_circle(start, Vec2::NEG_X * 1000.0);
+        let edge = map.move_circle(
+            start,
+            Vec2::NEG_X * (3.0 * TILE_SIZE + start.x - CollisionMap::center(UVec2::ZERO).x),
+        );
         assert!(map.can_stand(edge) && !map.can_stand(edge - Vec2::X * 4.0));
     }
 
@@ -246,9 +260,7 @@ mod tests {
 
     #[test]
     fn default_map_exercises_deep_water_shore_and_props() {
-        let (mut generator, definitions) = create_generator(MAP_SEED);
-        let (_, data) = generator.generate_grid().unwrap();
-        let map = collision_from_models(&generator, &definitions, data.iter());
+        let map = build_terrain(MAP_SEED).unwrap().collision;
         for expected in [Tile::Shore, Tile::Water, Tile::Tree, Tile::Rock] {
             assert!(
                 map.tiles().any(|(_, t)| t == expected),

@@ -9,7 +9,9 @@ use crate::{
 
 const PICKUP_RADIUS: f32 = 40.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord,
+)]
 pub(crate) enum ItemKind {
     Herb,
     Flower,
@@ -46,7 +48,7 @@ impl Pickable {
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct Inventory(BTreeMap<ItemKind, u32>);
+pub(crate) struct Inventory(pub(crate) BTreeMap<ItemKind, u32>);
 
 impl Inventory {
     fn add(&mut self, kind: ItemKind) -> u32 {
@@ -75,7 +77,10 @@ pub(crate) struct InventoryPlugin;
 impl Plugin for InventoryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Inventory>()
-            .add_systems(OnExit(GameState::Loading), spawn_hud)
+            .add_systems(
+                OnExit(GameState::Loading),
+                spawn_hud.in_set(crate::game_state::SpawnSet),
+            )
             .add_systems(
                 Update,
                 (collect, update_hud)
@@ -91,10 +96,12 @@ fn collect(
     player: Single<&Player>,
     items: Query<(Entity, &Pickable)>,
     mut bag: ResMut<Inventory>,
+    mut cue: MessageWriter<crate::sound::SoundCue>,
 ) {
     for (entity, item) in &items {
         if player.position.distance_squared(item.position) <= item.radius * item.radius {
             let count = bag.add(item.kind);
+            cue.write(crate::sound::SoundCue::Pickup);
             info!("Picked up {} (total: {count})", item.kind.name());
             // The root owns every visual part of this pickup, but not the ground tile.
             commands.entity(entity).despawn();
@@ -105,6 +112,7 @@ fn collect(
 fn spawn_hud(mut commands: Commands, bag: Res<Inventory>) {
     commands.spawn((
         InventoryLabel,
+        crate::game_state::SessionEntity,
         Text::new(format!("Inventory: {}", bag.summary())),
         TextFont {
             font_size: FontSize::Px(20.0),

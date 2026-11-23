@@ -1,4 +1,4 @@
-# p03_aibodh_chapter1 — Chapters 1–7：从角色到敌人
+# p03_aibodh_chapter1 — Chapters 1–14：从角色到联机
 
 在 [第一章的角色](https://aibodh.com/posts/bevy-rust-game-development-chapter-1/) 和 [第二章的五层 WFC 地图](https://aibodh.com/posts/bevy-rust-game-development-chapter-2/) 上，实现 [第三章 Let The Data Flow](https://aibodh.com/posts/bevy-rust-game-development-chapter-3/) 的数据驱动角色系统。使用 Bevy 0.20.1 和 `bevy_procedural_tilemaps = 0.5.0`；默认启动 3D，`--2d` 切到 2D。 两种模式均实现 [第四章 Let There Be Collisions](https://aibodh.com/posts/bevy-rust-game-development-chapter-4/) 的加载、暂停、碰撞和深度排序。
 
@@ -16,15 +16,41 @@ cargo test -p p03_aibodh_chapter1
 
 两个模式使用相同的操作：方向键移动，按住任一 `Shift` 奔跑，按 `Space` 跳跃，按 `1`–`6` 原地切换角色。默认角色为 Adventurer。斜向移动归一化；静止时保持最后朝向，显示 Walk 的首帧。
 
-地图为 25×18 格、五层，启动时生成一次。2D 每格 32 像素；3D 每格 1 个世界单位。两种模式都阻挡树干、岩石、树桩、深水和地图边界；浅岸可走。3D 角色依然以陆地表面为高度基准，不做通用物理或战斗。
+地图为 241×171 格、五层，加载时分块拼接。2D 每格 64 逻辑像素；3D 每格 1 个世界单位。两种模式都阻挡树干、岩石、树桩、深水和地图边界；浅岸可走。3D 角色依然以陆地表面为高度基准，不做通用物理或战斗。
 
 ### 3D 第三人称相机
 
 默认从角色背后跟随。左键单击窗口捕获鼠标，移动鼠标转动视角，`Esc` 暂停并释放鼠标，再按 `Esc` 恢复；恢复后可重新点击捕获。`WASD` 或方向键按相机的水平朝向移动，`Shift` 奔跑，`Space` 跳跃。镜头不随跳跃上下抖动；树木或地面挡在镜头与角色之间时，镜头会拉近。
 
+## 第 8–14 章：战斗、世界、存档、音频与联机
+
+作者的公开 MIT [代码仓库](https://github.com/jamesfebin/ImpatientProgrammerBevyRust/tree/37b5849327984c4378498d875e3c428bacb25c0c) 包含 `chapter8` 至 `chapter14` 的逐章工程。这里沿用现有 2D/3D 双模式，而不是直接替换成作者的 2D 工程。
+
+| 章节 | 本工程 |
+| --- | --- |
+| 8 · Damage | 法术按阵营命中并扣血，穿越一帧移动距离逐步检测；怪物死亡后移除，玩家死亡进入 Game Over，`Enter` 重开。 |
+| 9 · World Scale | WFC 分块拼接；两种视图共用地图、碰撞和物品位置。 |
+| 10 · Memory | 离线暂停菜单可按 `S` 存档或 `L` 读档，数字 `1`–`5` 选择槽位；Game Over 也可以读档。存档含玩家、背包、剩余敌人与拾取物，按种子重建世界。 |
+| 11 · Sound | 原创合成循环音乐和动作音效；`M` 静音/恢复。 |
+| 12 · Networking | 持久客户端身份和本地联机；本练习用回环 TCP 代替 SpacetimeDB，无需外部服务。 |
+| 13 · Shared World | 服务端保存并下发地图种子，2D 与 3D 客户端生成同一世界。 |
+| 14 · Friends | 同步远端玩家的位置、朝向和角色，插值绘制，断开时移除。战斗与拾取仍是各客户端本地模拟，不做 PvP 或共享战斗。 |
+
+### 本机联机
+
+在 workspace 根目录启动服务端，再分别运行两个客户端（身份文件不可共用）：
+
+```sh
+cargo run -p p03_aibodh_chapter1 --bin local_world_server -- world-seed.txt
+cargo run -p p03_aibodh_chapter1 -- --network player-a.id
+cargo run -p p03_aibodh_chapter1 -- --2d --network player-b.id
+```
+
+服务端只在 `127.0.0.1:43128` 监听。保存种子的文件已存在时，重启沿用原种子。离线不需要启动服务端。
+
 ## 第七章：敌人
 
-参照 [Let There Be Enemies](https://aibodh.com/posts/bevy-rust-game-development-chapter-7/)。加载完后，两只墓园死神在可通行位置出生。它们会在侦测范围内用 A* 绕开树木、岩石和深水，能直达玩家且进入射程后停下，朝玩家施放暗影法术（每只冷却 2 秒）。玩家和敌人共用地面碰撞规则，不能互相穿过；暂停时敌人、冷却和特效一同冻结。本章仍不结算伤害或死亡。
+参照 [Let There Be Enemies](https://aibodh.com/posts/bevy-rust-game-development-chapter-7/)。加载完后，两只墓园死神在可通行位置出生。它们会在侦测范围内用 A* 绕开树木、岩石和深水，能直达玩家且进入射程后停下，朝玩家施放暗影法术（每只冷却 2 秒）。玩家和敌人共用地面碰撞规则，不能互相穿过；暂停时敌人、冷却和特效一同冻结。伤害和死亡由第八章处理。
 
 2D 使用角色配置中的死神精灵图集和脚底深度排序；3D 使用带兜帽、发光眼睛和步行动画的立体方块模型，会转向移动或施法方向，不是朝相机的贴片。
 
@@ -32,13 +58,13 @@ cargo test -p p03_aibodh_chapter1
 
 参照 [Let There Be Particles](https://aibodh.com/posts/bevy-rust-game-development-chapter-6/)。两个模式都用 `Ctrl` 朝角色当前朝向施放，冷却 0.5 秒；`F5` 火焰、`F6` 奥术、`F7` 暗影、`F8` 毒雾。右上角显示当前法术，原来的 `1`–`6` 仍用于换角。3D 发射方向按相机水平朝向换算，粒子面向相机并受场景深度遮挡。
 
-`magic.rs` 定义四种法术及发射参数；`particles/` 共用发射、运动、旋转、变色、缩小和过期回收逻辑。2D、3D 分别使用各自的 WESL 入口，共用径向辉光函数和加法混合效果。暂停会冻结粒子与冷却；本章只有特效，不实现命中、伤害或法术与地形碰撞。
+`magic.rs` 定义四种法术及发射参数；`particles/` 共用发射、运动、旋转、变色、缩小和过期回收逻辑。2D、3D 分别使用各自的 WESL 入口，共用径向辉光函数和加法混合效果。暂停会冻结粒子与冷却；粒子本身不结算命中；第八章的独立弹体负责碰撞与伤害。
 
 ## 第五章：拾取、背包与镜头跟随
 
-参照 [Let There Be Pickups](https://aibodh.com/posts/bevy-rust-game-development-chapter-5/)。两种模式都可自动拾取草药、花朵、蘑菇和蕨类：走进物品周围 40 像素（3D 中 1.25 格）的范围即可。拾取后物品从地图消失，左上角背包计数立即更新；换角不清空背包，退出游戏后不保留。
+参照 [Let There Be Pickups](https://aibodh.com/posts/bevy-rust-game-development-chapter-5/)。两种模式都可自动拾取草药、花朵、蘑菇和蕨类：走进物品周围 40 像素（3D 中 0.625 格）的范围即可。拾取后物品从地图消失，左上角背包计数立即更新；换角不清空背包；离线可通过存档保留。
 
-2D 镜头放大到约 10 格高并平滑跟随。这里调整正交投影而非把瓦片改成 64 像素，以保持原有速度、碰撞和地图单位。3D 保留鼠标环绕和障碍避让，跟随位置与镜头拉回后的复位改为平滑过渡。两个模式都可加 `--fullscreen` 使用无边框全屏。
+2D 镜头放大到约 10 格高并平滑跟随。镜头缩放由正交投影控制。3D 保留鼠标环绕和障碍避让，跟随位置与镜头拉回后的复位改为平滑过渡。两个模式都可加 `--fullscreen` 使用无边框全屏。
 
 ## 第四章：状态、碰撞和遮挡
 
@@ -99,14 +125,14 @@ python3 practice/p03_aibodh_chapter1/tools/generate_sprite.py
 3. `map/models.rs`：`TerrainModelBuilder` 将模型和 sprite 绑定放在同一索引，避免错配。
 4. `map/sockets.rs`：创建水平材料、边缘和上下层 socket。
 5. `map/rules.rs`：泥土 → 绿草 → 黄草 → 水 → 装饰五层；透明模型表示该层空白。黄草只能在完整绿草上，装饰物底部只能连接水层的透明陆地；大树左右基座必须配对。
-6. `map/generate.rs`：用库执行 WFC，再通过库的 `spawn_node` 将结果生成到地图父实体下。
+6. `map/generate.rs`：在后台任务中分块执行 WFC，拼成统一的数据，再由各自的视图生成实体。
 
 ### 配置与实现约定
 
 - `generate.rs` 的 `MAP_SEED = 42`：修改数字并重启可得到另一张可复现的地图。固定种子不保证所有种子都能在重试预算内成功。
-- `GRID_X/GRID_Y` 控制地图宽高，`GRID_Z = 5` 对应规则中的五层。
+- `GRID_X/GRID_Y` 控制单个区块的宽高，`GRID_Z = 5` 对应规则中的五层。
 - `rules.rs` 的 `WATER_WEIGHT = 0.07` 保留现有小地图的水密度，让默认种子同时展示浅岸与深水；它不是精确百分比。
-- 小地图在 `Startup` 同步生成，最多重试 50 次，失败明确报错。没有使用库中失败后逐帧无限重试的 simple plugin；生成核心仍是教程指定的 WFC 库。
+- 加载时在后台分块生成，拼接失败时有限重试，最终失败在加载界面提示。
 - 装饰层外围固定为空白，防止边界生成半棵大树；树干的上方通过 `canopy_space` socket 要求空白装饰格，避免树冠与其他装饰重叠。树冠可延伸到水面上，但树干基座仍只在陆地。
 - 地表固定按层叠放；只有装饰和角色进入以基座 Y 排序的绘制层。
 - WFC 保证局部连接规则，不保证一定出现湖泊、所有装饰种类或可通行路线。

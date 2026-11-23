@@ -10,6 +10,7 @@ pub(crate) enum GameState {
     Loading,
     Playing,
     Paused,
+    GameOver,
 }
 
 #[derive(Resource, Default)]
@@ -18,18 +19,48 @@ pub(crate) struct LoadingError(pub Option<String>);
 #[derive(Component)]
 struct Overlay;
 
+#[derive(Component)]
+pub(crate) struct SessionEntity;
+
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct SpawnSet;
+
+fn clear_session(
+    mut commands: Commands,
+    entities: Query<Entity, With<SessionEntity>>,
+    mut failure: ResMut<LoadingError>,
+    bag: Option<ResMut<crate::inventory::Inventory>>,
+) {
+    for entity in entities.iter() {
+        commands.entity(entity).despawn();
+    }
+    failure.0 = None;
+    if let Some(mut bag) = bag {
+        *bag = default();
+    }
+}
+
 pub(crate) struct GameStatePlugin;
 
 impl Plugin for GameStatePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<GameState>()
             .init_resource::<LoadingError>()
-            .add_systems(OnEnter(GameState::Loading), loading_overlay)
+            .add_systems(
+                OnEnter(GameState::Loading),
+                (clear_session, loading_overlay).chain(),
+            )
             .add_systems(OnExit(GameState::Loading), remove_overlay)
             .add_systems(Update, animate_loading.run_if(in_state(GameState::Loading)))
             .add_systems(OnEnter(GameState::Paused), (pause_overlay, release_cursor))
             .add_systems(OnExit(GameState::Paused), remove_overlay)
-            .add_systems(PreUpdate, toggle_pause.after(InputSystems));
+            .add_systems(
+                OnEnter(GameState::GameOver),
+                (game_over_overlay, release_cursor),
+            )
+            .add_systems(OnExit(GameState::GameOver), remove_overlay)
+            .add_systems(PreUpdate, toggle_pause.after(InputSystems))
+            .add_systems(Update, update_sound);
     }
 }
 
@@ -93,6 +124,14 @@ fn pause_overlay(mut commands: Commands) {
     );
 }
 
+fn game_over_overlay(mut commands: Commands) {
+    overlay(
+        &mut commands,
+        "GAME OVER\n\nPress Enter to try again",
+        Color::srgba(0.0, 0.0, 0.0, 0.8),
+    );
+}
+
 fn release_cursor(mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>) {
     if let Ok(mut cursor) = cursor.single_mut() {
         cursor.grab_mode = CursorGrabMode::None;
@@ -108,15 +147,47 @@ fn remove_overlay(mut commands: Commands, overlays: Query<Entity, With<Overlay>>
 
 fn toggle_pause(
     keys: Res<ButtonInput<KeyCode>>,
+    menu: Option<Res<crate::save::SaveMenu>>,
     state: Res<State<GameState>>,
     mut next: ResMut<NextState<GameState>>,
 ) {
+    if menu.is_some_and(|menu| menu.is_slot_menu_open()) {
+        return;
+    }
+    if *state.get() == GameState::GameOver && keys.just_pressed(KeyCode::Enter) {
+        next.set(GameState::Loading);
+    }
     if !keys.just_pressed(KeyCode::Escape) {
         return;
     }
     match state.get() {
-        GameState::Loading => {}
+        GameState::Loading | GameState::GameOver => {}
         GameState::Playing => next.set(GameState::Paused),
         GameState::Paused => next.set(GameState::Playing),
+    }
+}
+
+fn update_sound(
+    state: Res<State<GameState>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    settings: Option<ResMut<crate::sound::SoundSettings>>,
+    mut cue: MessageWriter<crate::sound::SoundCue>,
+) {
+    use crate::sound::{MusicTrack, SoundCue};
+    let Some(mut settings) = settings else {
+        return;
+    };
+    if state.is_changed() {
+        settings.music = match state.get() {
+            GameState::Loading | GameState::GameOver => MusicTrack::Menu,
+            GameState::Playing | GameState::Paused => MusicTrack::Gameplay,
+        };
+        settings.paused = *state.get() == GameState::Paused;
+        if matches!(*state.get(), GameState::Playing | GameState::Paused) {
+            cue.write(SoundCue::MenuClick);
+        }
+    }
+    if keys.just_pressed(KeyCode::KeyM) {
+        settings.muted = !settings.muted;
     }
 }

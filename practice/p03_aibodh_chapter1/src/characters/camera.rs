@@ -182,8 +182,20 @@ pub(super) fn follow_player(
     camera.rotation = rotation;
 }
 
-// Ray vs. an axis-aligned box, in box-local coordinates. Ignore boxes containing
-// the pivot: a canopy can overhang the player’s ground position.
+pub(super) fn reset_tracking(
+    mut cameras_2d: Query<&mut FollowCamera2d>,
+    mut cameras_3d: Query<&mut FollowRig3d>,
+) {
+    for mut camera in &mut cameras_2d {
+        camera.0 = None;
+    }
+    for mut camera in &mut cameras_3d {
+        camera.pivot = None;
+        camera.arm = ARM_LENGTH;
+    }
+}
+
+// Ray vs. an axis-aligned box; ignore a canopy containing the camera pivot.
 fn box_entry(origin: Vec3, direction: Vec3, half: Vec3) -> Option<f32> {
     let (mut enter, mut exit) = (f32::NEG_INFINITY, f32::INFINITY);
     for axis in 0..3 {

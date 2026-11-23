@@ -4,23 +4,44 @@ use bevy::{
 };
 
 mod characters;
+mod combat;
 mod enemy;
 mod game_state;
 mod inventory;
 mod magic;
 mod map;
+mod network;
 mod particles;
+mod save;
+mod sound;
 
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let sprites_2d = args.iter().any(|arg| arg == "--2d");
     let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
     let (title, background) = if sprites_2d {
-        ("AIBodh Chapter 7 — 2D", Color::BLACK)
+        ("AIBodh Chapters 8–14 — 2D", Color::BLACK)
     } else {
-        ("AIBodh Chapter 7 — 3D", Color::srgb(0.11, 0.15, 0.21))
+        ("AIBodh Chapters 8–14 — 3D", Color::srgb(0.11, 0.15, 0.21))
     };
 
+    let network = args
+        .iter()
+        .position(|arg| arg == "--network")
+        .map(|i| {
+            args.get(i + 1)
+                .filter(|path| !path.starts_with("--"))
+                .ok_or_else(|| "--network requires an identity file".to_string())
+                .and_then(|path| {
+                    network::NetworkPlugin::connect(sprites_2d, path)
+                        .map_err(|error| error.to_string())
+                })
+        })
+        .transpose()
+        .unwrap_or_else(|error| {
+            eprintln!("Network startup failed: {error}");
+            std::process::exit(1)
+        });
     let mut app = App::new();
     app.insert_resource(ClearColor(background)).add_plugins(
         DefaultPlugins
@@ -62,6 +83,17 @@ fn main() {
         magic::MagicPlugin,
         particles::ParticlePlugin,
         enemy::EnemyPlugin,
+        combat::CombatPlugin,
+        sound::SoundPlugin,
     ));
+    if let Some(network) = network {
+        app.insert_resource(map::MapSeed(network.world_seed()))
+            .add_plugins(network);
+    } else {
+        app.add_plugins(save::SavePlugin).add_systems(
+            OnExit(game_state::GameState::Loading),
+            save::restore_pending.after(game_state::SpawnSet),
+        );
+    }
     app.run();
 }

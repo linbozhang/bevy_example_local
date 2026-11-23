@@ -73,6 +73,10 @@ impl Player {
         }
     }
 
+    pub(super) fn is_jumping(&self) -> bool {
+        self.state == CharacterState::Jumping
+    }
+
     pub(crate) fn facing_direction(&self) -> Vec2 {
         match self.facing {
             Facing::Up => Vec2::Y,

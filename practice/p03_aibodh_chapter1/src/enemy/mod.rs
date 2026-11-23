@@ -7,6 +7,7 @@ use bevy::prelude::*;
 
 use crate::{
     characters::{CharactersPlugin, MovementSet, Player, Roster, RosterHandle},
+    combat::{Health, Side},
     game_state::GameState,
     magic::{Power, spawn_spell},
     map::collision::{CollisionMap, FOOT_RADIUS, Tile},
@@ -31,6 +32,7 @@ enum Behavior {
 #[derive(Component, Default)]
 pub(crate) struct Enemy {
     pub position: Vec2,
+    pub(crate) spawn_index: usize,
     direction: Vec2,
     behavior: Behavior,
     waypoints: VecDeque<Vec2>,
@@ -40,19 +42,26 @@ pub(crate) struct Enemy {
     speed: f32,
 }
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct EnemySet;
+
 pub(crate) struct EnemyPlugin;
 
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnExit(GameState::Loading), spawn)
-            .add_systems(
-                Update,
-                (update, view::draw)
-                    .chain()
-                    .after(MovementSet)
-                    .before(ParticleSet)
-                    .run_if(in_state(GameState::Playing)),
-            );
+        app.add_systems(
+            OnExit(GameState::Loading),
+            spawn.in_set(crate::game_state::SpawnSet),
+        )
+        .add_systems(
+            Update,
+            (update, view::draw)
+                .chain()
+                .in_set(EnemySet)
+                .after(MovementSet)
+                .before(ParticleSet)
+                .run_if(in_state(GameState::Playing)),
+        );
     }
 }
 
@@ -85,7 +94,10 @@ fn spawn(
         &mut meshes,
         &mut materials,
     );
-    for offset in [Vec2::new(170.0, 72.0), Vec2::new(-190.0, 120.0)] {
+    for (spawn_index, offset) in [Vec2::new(170.0, 72.0), Vec2::new(-190.0, 120.0)]
+        .into_iter()
+        .enumerate()
+    {
         let desired = player + offset;
         let mut candidates: Vec<_> = map
             .tiles()
@@ -114,12 +126,15 @@ fn spawn(
         let id = commands
             .spawn((
                 Name::new(REAPER),
+                crate::game_state::SessionEntity,
                 Enemy {
                     position,
+                    spawn_index,
                     speed,
                     direction: (player - position).normalize_or_zero(),
                     ..default()
                 },
+                Health::new(entry.map_or(125.0, |c| c.max_health)),
                 Transform::default(),
                 Visibility::default(),
             ))
@@ -136,6 +151,7 @@ fn update(
     time: Res<Time>,
     player: Single<&Player>,
     mut enemies: Query<(Entity, &mut Enemy)>,
+    mut cue: MessageWriter<crate::sound::SoundCue>,
 ) {
     let dt = time.delta_secs();
     let mut positions: Vec<_> = enemies.iter().map(|(id, e)| (id, e.position)).collect();
@@ -168,8 +184,17 @@ fn update(
                 if let Some(direction) = to_player.try_normalize() {
                     enemy.direction = direction;
                     if enemy.cooldown == 0.0 && distance <= ATTACK_RANGE {
-                        spawn_spell(&mut commands, *mode, Power::Shadow, old, direction, 24.0);
+                        spawn_spell(
+                            &mut commands,
+                            *mode,
+                            Power::Shadow,
+                            old,
+                            direction,
+                            24.0,
+                            Side::Enemy,
+                        );
                         enemy.cooldown = COOLDOWN;
+                        cue.write(crate::sound::SoundCue::EnemyCast);
                     }
                 }
             }

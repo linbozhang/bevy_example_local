@@ -6,8 +6,8 @@ use std::{
 use bevy::prelude::*;
 
 use super::{
-    collision::{COUNT, CollisionMap, FOOT_RADIUS},
-    generate::{GRID_X, GRID_Y, TILE_SIZE},
+    collision::{CollisionMap, FOOT_RADIUS},
+    generate::{COUNT, TILE_SIZE},
 };
 
 impl CollisionMap {
@@ -21,14 +21,16 @@ impl CollisionMap {
             return VecDeque::from([goal]);
         }
         let center = |i| Self::center(Self::coords(i));
-        let cell = |p: Vec2| {
-            (p / TILE_SIZE + Vec2::new(GRID_X as f32, GRID_Y as f32) * 0.5)
-                .floor()
-                .as_ivec2()
+        let (Some(base), Some(goal_cell)) = (Self::tile_at(start), Self::tile_at(goal)) else {
+            return VecDeque::new();
         };
+        let base = base.as_ivec2();
+        let goal_cell = goal_cell.as_ivec2();
         // Seed the search with a center that the actual collider can reach, even
         // when the actor is already standing beside an obstacle inside its tile.
-        let Some(start_index) = (0..COUNT)
+        let Some(start_index) = (-2..=2)
+            .flat_map(|dy| (-2..=2).map(move |dx| base + IVec2::new(dx, dy)))
+            .filter_map(Self::index)
             .filter(|&i| {
                 start.distance_squared(center(i)) <= (TILE_SIZE * 1.5).powi(2)
                     && self.clear_segment(start, center(i))
@@ -41,13 +43,12 @@ impl CollisionMap {
         else {
             return VecDeque::new();
         };
-        let goal_cell = cell(goal);
         let heuristic = |i| {
             let d = (Self::coords(i).as_ivec2() - goal_cell).abs();
             10 * d.max_element() + 4 * d.min_element()
         };
-        let mut costs = [i32::MAX; COUNT];
-        let mut previous = [None; COUNT];
+        let mut costs = vec![i32::MAX; COUNT];
+        let mut previous = vec![None; COUNT];
         let mut queue = BinaryHeap::from([Reverse((heuristic(start_index), 0, start_index))]);
         costs[start_index] = 0;
         while let Some(Reverse((_, cost, i))) = queue.pop() {

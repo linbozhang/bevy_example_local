@@ -140,7 +140,8 @@ fn emit(
             let transform = Transform::from_translation(emitter.origin + spatial(offset) * units)
                 .with_rotation(facing * Quat::from_rotation_z(particle.angle))
                 .with_scale(Vec3::splat(particle.size));
-            let mut entity = commands.spawn((particle, transform));
+            let mut entity =
+                commands.spawn((particle, transform, crate::game_state::SessionEntity));
             match *mode {
                 CharactersPlugin::Sprites2d => {
                     entity.insert((Mesh2d(quad.0.clone()), MeshMaterial2d(glow)));

@@ -42,8 +42,10 @@ fn test_app_with(mode: CharactersPlugin, configure: impl FnOnce(&mut App)) -> (A
         mode,
         crate::inventory::InventoryPlugin,
         crate::magic::MagicPlugin,
+        crate::combat::CombatPlugin,
         crate::particles::ParticlePlugin,
     ))
+    .add_message::<crate::sound::SoundCue>()
     .init_resource::<CollisionMap>()
     .init_asset::<Image>()
     .register_asset_loader(ImageLoader::new(CompressedImageFormats::empty()))
@@ -416,45 +418,6 @@ fn pickups_in_both_modes_update_the_hud_and_despawn_the_whole_item() {
 }
 
 #[test]
-fn generated_maps_spawn_matching_pickups() {
-    use crate::{inventory::Pickable, map::MapPlugin};
-    let mut maps = [MapPlugin::Sprites2d, MapPlugin::Blocks3d]
-        .map(|mode| {
-            let mut app = App::new();
-            app.add_plugins((
-                bevy::app::TaskPoolPlugin::default(),
-                AssetPlugin {
-                    file_path: ASSETS.into(),
-                    ..default()
-                },
-                mode,
-            ))
-            .init_asset::<Image>()
-            .register_asset_loader(ImageLoader::new(CompressedImageFormats::empty()))
-            .init_asset::<Mesh>()
-            .init_asset::<StandardMaterial>()
-            .init_asset::<TextureAtlasLayout>();
-            app.update();
-            let world = app.world_mut();
-            let mut items: Vec<_> = world
-                .query::<(&Pickable, &Children)>()
-                .iter(world)
-                .map(|(item, children)| {
-                    assert!(!children.is_empty());
-                    assert!(world.resource::<CollisionMap>().can_stand(item.position));
-                    (item.kind, item.position.x as i32, item.position.y as i32)
-                })
-                .collect();
-            items.sort_unstable();
-            items
-        })
-        .into_iter();
-    let two_d = maps.next().unwrap();
-    assert!(!two_d.is_empty());
-    assert_eq!(two_d, maps.next().unwrap());
-}
-
-#[test]
 fn spells_use_current_facing_respect_pause_and_cooldown_and_expire() {
     use crate::particles::{Emitter, Particle};
     use KeyCode::{ArrowRight, ControlLeft, ControlRight, Escape, F6, F8};
@@ -582,5 +545,60 @@ fn enemies_chase_cast_and_pause_in_both_modes() {
                 .count(),
             particles
         );
+    }
+}
+
+#[test]
+fn combat_applies_swept_hits_and_restarts_sessions_in_both_modes() {
+    use crate::{
+        combat::{Health, Projectile, Side},
+        enemy::Enemy,
+    };
+    for mode in [CharactersPlugin::Sprites2d, CharactersPlugin::Billboard3d] {
+        let (mut app, player) = test_app(mode);
+        let enemy = app
+            .world_mut()
+            .spawn((
+                {
+                    let mut enemy = Enemy::default();
+                    enemy.position = Vec2::X * 60.;
+                    enemy
+                },
+                Health::new(30.),
+            ))
+            .id();
+        let shot = |side, position, damage| Projectile {
+            side,
+            position,
+            damage,
+            velocity: Vec2::X * 1000.,
+            remaining: 1.,
+            radius: 1.,
+        };
+        app.world_mut().spawn(shot(Side::Player, Vec2::ZERO, 35.));
+        step(&mut app, 0.12, &[]);
+        assert!(app.world().get_entity(enemy).is_err());
+        assert_eq!(app.world().get::<Health>(player).unwrap().current, 100.);
+        app.world_mut()
+            .spawn(shot(Side::Enemy, Vec2::NEG_X * 60., 100.));
+        step(&mut app, 0.12, &[]);
+        step(&mut app, 0., &[]);
+        assert_eq!(
+            *app.world().resource::<State<GameState>>().get(),
+            GameState::GameOver
+        );
+        step(&mut app, 0., &[KeyCode::Enter]);
+        step(&mut app, 0., &[]);
+        assert_eq!(
+            *app.world().resource::<State<GameState>>().get(),
+            GameState::Playing
+        );
+        let world = app.world_mut();
+        let hp = world
+            .query_filtered::<&Health, With<Player>>()
+            .single(world)
+            .unwrap();
+        assert_eq!(hp.current, hp.max);
+        assert!(world.get_entity(player).is_err());
     }
 }

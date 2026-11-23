@@ -41,10 +41,13 @@ impl Plugin for CharactersPlugin {
             .init_asset_loader::<RosterLoader>()
             .init_resource::<LoadedImages>()
             .add_systems(Startup, load_roster)
+            .add_systems(OnEnter(GameState::Loading), camera::reset_tracking)
             .add_systems(Update, load_images.run_if(in_state(GameState::Loading)))
             .add_systems(
                 OnExit(GameState::Loading),
-                (spawn_player, view::draw_player).chain(),
+                (spawn_player, view::draw_player)
+                    .chain()
+                    .in_set(crate::game_state::SpawnSet),
             );
         match self {
             Self::Sprites2d => {
@@ -92,6 +95,7 @@ fn load_images(
     mode: Res<CharactersPlugin>,
     mut images: ResMut<LoadedImages>,
     mut error: ResMut<LoadingError>,
+    map: Option<Res<CollisionMap>>,
     mut next: ResMut<NextState<GameState>>,
 ) {
     if error.0.is_some() {
@@ -125,23 +129,36 @@ fn load_images(
             return;
         }
     }
-    if images
-        .0
-        .iter()
-        .all(|image| server.is_loaded_with_dependencies(image.id()))
+    if map.is_some()
+        && images
+            .0
+            .iter()
+            .all(|image| server.is_loaded_with_dependencies(image.id()))
     {
         next.set(GameState::Playing);
     }
 }
 
-fn spawn_player(mut commands: Commands, mode: Res<CharactersPlugin>, map: Res<CollisionMap>) {
+fn spawn_player(
+    mut commands: Commands,
+    mode: Res<CharactersPlugin>,
+    map: Res<CollisionMap>,
+    roster: Res<Assets<Roster>>,
+    handle: Res<RosterHandle>,
+) {
     let mut player = Player::new(matches!(*mode, CharactersPlugin::Billboard3d));
     player.position = map.spawn_point();
     commands.spawn((
         Name::new("Player"),
+        crate::game_state::SessionEntity,
         player,
         Velocity::default(),
         crate::magic::PlayerMagic::default(),
+        crate::combat::Health::new(
+            roster
+                .get(&handle.0)
+                .map_or(100., |r| r.characters[0].max_health),
+        ),
         Transform::default(),
     ));
 }
@@ -152,9 +169,15 @@ fn update_player(
     orbit: Option<Res<camera::Orbit>>,
     handle: Res<RosterHandle>,
     rosters: Res<Assets<Roster>>,
-    mut player: Query<(&mut Player, &mut Name, &mut Velocity)>,
+    mut cue: MessageWriter<crate::sound::SoundCue>,
+    mut player: Query<(
+        &mut Player,
+        &mut Name,
+        &mut Velocity,
+        &mut crate::combat::Health,
+    )>,
 ) {
-    let (Some(roster), Ok((mut player, mut name, mut velocity))) =
+    let (Some(roster), Ok((mut player, mut name, mut velocity, mut hp))) =
         (rosters.get(&handle.0), player.single_mut())
     else {
         return;
@@ -170,6 +193,7 @@ fn update_player(
         player.select(index);
     }
     let entry = &roster.characters[player.selected];
+    hp.set_max(entry.max_health);
     if name.as_str() != entry.name {
         *name = Name::new(entry.name.clone());
         info!("Selected {} (max health: {})", entry.name, entry.max_health);
@@ -178,7 +202,11 @@ fn update_player(
     let world_direction = orbit
         .as_ref()
         .map_or(direction, |orbit| orbit.rotate_move(direction));
+    let jumping = player.is_jumping();
     velocity.0 = player.update(entry, &input, direction, world_direction, time.delta_secs());
+    if !jumping && player.is_jumping() {
+        cue.write(crate::sound::SoundCue::Jump);
+    }
 }
 
 #[cfg(test)]
