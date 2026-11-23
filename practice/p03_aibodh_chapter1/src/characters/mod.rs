@@ -11,7 +11,8 @@ use crate::{
 };
 use bevy::{asset::LoadState, prelude::*};
 pub(crate) use camera::{FollowCamera, Orbit, ground_position};
-use config::{Roster, RosterLoader};
+use config::RosterLoader;
+pub(crate) use config::{Action, Character, Roster};
 pub(crate) use motion::Player;
 use motion::Velocity;
 
@@ -28,7 +29,7 @@ pub enum CharactersPlugin {
 }
 
 #[derive(Resource)]
-struct RosterHandle(Handle<Roster>);
+pub(crate) struct RosterHandle(pub(crate) Handle<Roster>);
 
 #[derive(Resource, Default)]
 struct LoadedImages(Vec<Handle<Image>>);

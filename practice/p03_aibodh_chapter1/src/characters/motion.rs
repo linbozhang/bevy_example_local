@@ -28,9 +28,14 @@ pub(super) fn apply_velocity(
     time: Res<Time>,
     map: Res<CollisionMap>,
     mut players: Query<(&Velocity, &mut Player)>,
+    enemies: Query<&crate::enemy::Enemy>,
 ) {
     for (velocity, mut player) in &mut players {
-        player.position = map.move_circle(player.position, velocity.0 * time.delta_secs());
+        player.position = map.move_circle_avoiding(
+            player.position,
+            velocity.0 * time.delta_secs(),
+            enemies.iter().map(|e| e.position),
+        );
     }
 }
 

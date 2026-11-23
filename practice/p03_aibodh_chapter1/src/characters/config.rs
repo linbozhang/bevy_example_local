@@ -7,14 +7,14 @@ use bevy::{
 use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
-pub(super) enum Action {
+pub(crate) enum Action {
     Walk,
     Run,
     Jump,
 }
 
 #[derive(Deserialize)]
-pub(super) struct Clip {
+pub(crate) struct Clip {
     pub start_row: u32,
     pub frame_count: u32,
     pub frame_time: f32,
@@ -22,7 +22,7 @@ pub(super) struct Clip {
 }
 
 #[derive(Deserialize)]
-pub(super) struct Character {
+pub(crate) struct Character {
     pub name: String,
     pub max_health: f32,
     pub base_move_speed: f32,
@@ -35,7 +35,7 @@ pub(super) struct Character {
 }
 
 #[derive(Asset, TypePath, Deserialize)]
-pub(super) struct Roster {
+pub(crate) struct Roster {
     pub characters: Vec<Character>,
 }
 

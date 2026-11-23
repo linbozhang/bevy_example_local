@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-enum Power {
+pub(crate) enum Power {
     #[default]
     Fire,
     Arcane,
@@ -179,9 +179,26 @@ fn cast(
     let direction = orbit
         .as_ref()
         .map_or(facing, |orbit| orbit.rotate_move(facing));
-    let offset = player.position + direction * 16.0;
-    let height = 24.0 + player.lift * 20.0;
-    let origin = match *mode {
+    spawn_spell(
+        &mut commands,
+        *mode,
+        magic.power,
+        player.position,
+        direction,
+        24.0 + player.lift * 20.0,
+    );
+}
+
+pub(crate) fn spawn_spell(
+    commands: &mut Commands,
+    mode: CharactersPlugin,
+    power: Power,
+    position: Vec2,
+    direction: Vec2,
+    height: f32,
+) {
+    let offset = position + direction * 16.0;
+    let origin = match mode {
         CharactersPlugin::Sprites2d => Vec3::new(
             offset.x,
             offset.y + height,
@@ -189,7 +206,7 @@ fn cast(
         ),
         CharactersPlugin::Billboard3d => ground_position(offset) + Vec3::Y * (height / TILE_SIZE),
     };
-    let (primary, core) = magic.power.layers();
+    let (primary, core) = power.layers();
     for layer in std::iter::once(primary).chain(core) {
         commands.spawn(Emitter {
             origin,

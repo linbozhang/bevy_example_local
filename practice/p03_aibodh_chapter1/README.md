@@ -1,4 +1,4 @@
-# p03_aibodh_chapter1 — Chapters 1–6：从角色到魔法粒子
+# p03_aibodh_chapter1 — Chapters 1–7：从角色到敌人
 
 在 [第一章的角色](https://aibodh.com/posts/bevy-rust-game-development-chapter-1/) 和 [第二章的五层 WFC 地图](https://aibodh.com/posts/bevy-rust-game-development-chapter-2/) 上，实现 [第三章 Let The Data Flow](https://aibodh.com/posts/bevy-rust-game-development-chapter-3/) 的数据驱动角色系统。使用 Bevy 0.20.1 和 `bevy_procedural_tilemaps = 0.5.0`；默认启动 3D，`--2d` 切到 2D。 两种模式均实现 [第四章 Let There Be Collisions](https://aibodh.com/posts/bevy-rust-game-development-chapter-4/) 的加载、暂停、碰撞和深度排序。
 
@@ -21,6 +21,12 @@ cargo test -p p03_aibodh_chapter1
 ### 3D 第三人称相机
 
 默认从角色背后跟随。左键单击窗口捕获鼠标，移动鼠标转动视角，`Esc` 暂停并释放鼠标，再按 `Esc` 恢复；恢复后可重新点击捕获。`WASD` 或方向键按相机的水平朝向移动，`Shift` 奔跑，`Space` 跳跃。镜头不随跳跃上下抖动；树木或地面挡在镜头与角色之间时，镜头会拉近。
+
+## 第七章：敌人
+
+参照 [Let There Be Enemies](https://aibodh.com/posts/bevy-rust-game-development-chapter-7/)。加载完后，两只墓园死神在可通行位置出生。它们会在侦测范围内用 A* 绕开树木、岩石和深水，能直达玩家且进入射程后停下，朝玩家施放暗影法术（每只冷却 2 秒）。玩家和敌人共用地面碰撞规则，不能互相穿过；暂停时敌人、冷却和特效一同冻结。本章仍不结算伤害或死亡。
+
+2D 使用角色配置中的死神精灵图集和脚底深度排序；3D 使用带兜帽、发光眼睛和步行动画的立体方块模型，会转向移动或施法方向，不是朝相机的贴片。
 
 ## 第六章：魔法粒子
 

@@ -4,6 +4,7 @@ use bevy::{
 };
 
 mod characters;
+mod enemy;
 mod game_state;
 mod inventory;
 mod magic;
@@ -15,9 +16,9 @@ fn main() {
     let sprites_2d = args.iter().any(|arg| arg == "--2d");
     let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
     let (title, background) = if sprites_2d {
-        ("AIBodh Chapter 6 — 2D", Color::BLACK)
+        ("AIBodh Chapter 7 — 2D", Color::BLACK)
     } else {
-        ("AIBodh Chapter 6 — 3D", Color::srgb(0.11, 0.15, 0.21))
+        ("AIBodh Chapter 7 — 3D", Color::srgb(0.11, 0.15, 0.21))
     };
 
     let mut app = App::new();
@@ -60,6 +61,7 @@ fn main() {
         inventory::InventoryPlugin,
         magic::MagicPlugin,
         particles::ParticlePlugin,
+        enemy::EnemyPlugin,
     ));
     app.run();
 }

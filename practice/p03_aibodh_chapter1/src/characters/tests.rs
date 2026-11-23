@@ -26,6 +26,10 @@ use crate::game_state::{GameState, LoadingError};
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/assets");
 
 fn test_app(mode: CharactersPlugin) -> (App, Entity) {
+    test_app_with(mode, |_| {})
+}
+
+fn test_app_with(mode: CharactersPlugin, configure: impl FnOnce(&mut App)) -> (App, Entity) {
     let mut app = App::new();
     app.add_plugins((
         bevy::app::TaskPoolPlugin::default(),
@@ -50,6 +54,7 @@ fn test_app(mode: CharactersPlugin) -> (App, Entity) {
     .init_resource::<ButtonInput<MouseButton>>()
     .init_resource::<ButtonInput<KeyCode>>()
     .init_resource::<Time>();
+    configure(&mut app);
     app.update();
     assert_eq!(
         *app.world().resource::<State<GameState>>().get(),
@@ -503,5 +508,79 @@ fn spells_use_current_facing_respect_pause_and_cooldown_and_expire() {
         assert_eq!(count::<Particle>(&mut app), 0);
         step(&mut app, 0., &[F6, ControlRight]);
         assert_eq!(count::<Particle>(&mut app), 13);
+    }
+}
+
+#[test]
+fn enemies_chase_cast_and_pause_in_both_modes() {
+    use crate::{
+        enemy::{Enemy, EnemyPlugin},
+        particles::Particle,
+    };
+    for mode in [CharactersPlugin::Sprites2d, CharactersPlugin::Billboard3d] {
+        let (mut app, player) = test_app_with(mode, |app| {
+            app.add_plugins(EnemyPlugin);
+        });
+        let world = app.world_mut();
+        let enemies: Vec<_> = world
+            .query::<(Entity, &Enemy)>()
+            .iter(world)
+            .map(|(id, e)| (id, e.position))
+            .collect();
+        assert_eq!(enemies.len(), 2);
+        for &(id, position) in &enemies {
+            assert!(world.resource::<CollisionMap>().can_stand(position));
+            match mode {
+                CharactersPlugin::Sprites2d => {
+                    assert!(world.get::<Sprite>(id).unwrap().texture_atlas.is_some())
+                }
+                CharactersPlugin::Billboard3d => {
+                    assert!(world.get::<Sprite>(id).is_none());
+                    assert!(
+                        world
+                            .get::<Children>(id)
+                            .unwrap()
+                            .iter()
+                            .filter(|&child| world.get::<Mesh3d>(child).is_some())
+                            .count()
+                            >= 8
+                    );
+                }
+            }
+        }
+        assert!(
+            world
+                .get::<Player>(player)
+                .unwrap()
+                .position
+                .abs_diff_eq(Vec2::ZERO, 1e-5)
+        );
+        step(&mut app, 0.25, &[]);
+        for &(id, previous) in &enemies {
+            assert!(app.world().get::<Enemy>(id).unwrap().position.length() < previous.length());
+        }
+        for _ in 0..15 {
+            step(&mut app, 0.1, &[]);
+        }
+        let world = app.world_mut();
+        let particles = world
+            .query_filtered::<Entity, With<Particle>>()
+            .iter(world)
+            .count();
+        assert!(
+            particles > 0,
+            "reapers should have cast their shadow spells"
+        );
+        let before = world.get::<Enemy>(enemies[0].0).unwrap().position;
+        step(&mut app, 0.5, &[KeyCode::Escape]);
+        let world = app.world_mut();
+        assert_eq!(world.get::<Enemy>(enemies[0].0).unwrap().position, before);
+        assert_eq!(
+            world
+                .query_filtered::<Entity, With<Particle>>()
+                .iter(world)
+                .count(),
+            particles
+        );
     }
 }

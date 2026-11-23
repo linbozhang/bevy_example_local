@@ -5,7 +5,7 @@ use super::generate::{GRID_X, GRID_Y, TILE_SIZE};
 
 pub(crate) const FOOT_RADIUS: f32 = 7.0;
 const SIZE: UVec2 = UVec2::new(GRID_X, GRID_Y);
-const COUNT: usize = (GRID_X * GRID_Y) as usize;
+pub(super) const COUNT: usize = (GRID_X * GRID_Y) as usize;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Tile {
@@ -74,12 +74,12 @@ impl CollisionMap {
         map
     }
 
-    fn index(p: IVec2) -> Option<usize> {
+    pub(super) fn index(p: IVec2) -> Option<usize> {
         (p.cmpge(IVec2::ZERO).all() && p.cmplt(SIZE.as_ivec2()).all())
             .then(|| (p.y as u32 * GRID_X + p.x as u32) as usize)
     }
 
-    fn coords(index: usize) -> UVec2 {
+    pub(super) fn coords(index: usize) -> UVec2 {
         UVec2::new(index as u32 % GRID_X, index as u32 / GRID_X)
     }
 
@@ -137,7 +137,24 @@ impl CollisionMap {
         true
     }
 
-    pub fn move_circle(&self, mut position: Vec2, delta: Vec2) -> Vec2 {
+    #[cfg(test)]
+    pub fn move_circle(&self, position: Vec2, delta: Vec2) -> Vec2 {
+        self.move_circle_avoiding(position, delta, [])
+    }
+
+    pub fn move_circle_avoiding(
+        &self,
+        mut position: Vec2,
+        delta: Vec2,
+        others: impl IntoIterator<Item = Vec2> + Clone,
+    ) -> Vec2 {
+        let clear = |p: Vec2| {
+            self.can_stand(p)
+                && others
+                    .clone()
+                    .into_iter()
+                    .all(|other| p.distance_squared(other) >= (2.0 * FOOT_RADIUS).powi(2))
+        };
         if delta == Vec2::ZERO {
             return position;
         }
@@ -147,15 +164,15 @@ impl CollisionMap {
         let step = delta / steps.max(1) as f32;
         for _ in 0..steps {
             let previous = position;
-            if self.can_stand(position + step) {
+            if clear(position + step) {
                 position += step;
             } else {
                 let x = position + Vec2::new(step.x, 0.0);
-                if self.can_stand(x) {
+                if clear(x) {
                     position = x;
                 }
                 let y = position + Vec2::new(0.0, step.y);
-                if self.can_stand(y) {
+                if clear(y) {
                     position = y;
                 }
             }
@@ -216,6 +233,15 @@ mod tests {
         assert!(slid.y > stopped.y && map.can_stand(slid));
         let edge = map.move_circle(start, Vec2::NEG_X * 1000.0);
         assert!(map.can_stand(edge) && !map.can_stand(edge - Vec2::X * 4.0));
+    }
+
+    #[test]
+    fn moving_actors_do_not_tunnel_through_stationary_actors() {
+        let map = CollisionMap::default();
+        let p = map.move_circle_avoiding(Vec2::NEG_X * 30.0, Vec2::X * 100.0, [Vec2::ZERO]);
+        assert!(p.x > -30.0 && p.x <= -FOOT_RADIUS * 2.0);
+        let slid = map.move_circle_avoiding(p, Vec2::new(5.0, 10.0), [Vec2::ZERO]);
+        assert!(slid.y > p.y && slid.length() >= FOOT_RADIUS * 2.0);
     }
 
     #[test]

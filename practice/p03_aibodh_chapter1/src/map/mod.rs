@@ -4,6 +4,7 @@ mod block_art;
 pub(crate) mod collision;
 pub mod generate;
 mod models;
+mod navigation;
 mod rules;
 mod sockets;
 mod tilemap;
